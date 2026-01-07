@@ -1,0 +1,80 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Customer API",
+    "description": "API for managing customers",
+    "version": "1.0"
+  },
+  "host": "127.0.0.1:5000",
+  "basePath": "/",
+  "schemes": ["http"],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Home endpoint",
+        "description": "Simple test endpoint to check if Flask is working",
+        "responses": {
+          "200": {
+            "description": "Returns a message",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/create_customer": {
+      "post": {
+        "summary": "Create a new customer",
+        "description": "Adds a customer to the database",
+        "consumes": ["application/json"],
+        "parameters": [
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+                "email": {"type": "string"},
+                "company": {"type": "string"}
+              },
+              "required": ["name", "age", "email", "company"]
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Customer added",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {"type": "string"},
+                "customer_id": {"type": "integer"}
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request / Invalid input",
+            "schema": {
+              "type": "object",
+              "properties": {"error": {"type": "string"}}
+            }
+          },
+          "500": {
+            "description": "MySQL error",
+            "schema": {
+              "type": "object",
+              "properties": {"error": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}
