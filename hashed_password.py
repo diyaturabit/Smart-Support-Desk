@@ -1,19 +1,21 @@
-import hashlib
+# from passlib.context import CryptContext
+# pwd_context=CryptContext(schemes=["bcrypt"],deprecated="auto")
+
+# def hash_password(password: str) -> str:
+#     return pwd_context.hash(password[:72])  # bcrypt limit
+
+# def verify_password(plain_password: str, hashed_password: str) -> bool:
+#     return pwd_context.verify(plain_password, hashed_password)
+
 from passlib.context import CryptContext
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto"
+)
 
 def hash_password(password: str) -> str:
-    # Step 1: SHA-256 pre-hash
-    passw = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return pwd_context.hash(password)
 
-    # Step 2: bcrypt hash
-    return pwd_context.hash(passw)
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    passw = hashlib.sha256(plain_password.encode("utf-8")).hexdigest()
-    return pwd_context.verify(passw, hashed_password)
-
-# password = "diya"   # password you want for admin
-# hashed_password = pwd_context.hash(password)
-
+def verify_password(password: str, hash: str) -> bool:
+    return pwd_context.verify(password, hash)

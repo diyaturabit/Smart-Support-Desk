@@ -1,5 +1,5 @@
 from pydantic import BaseModel,EmailStr
-from typing import Literal
+from typing import Literal,Optional
 
 class CustomerCreate(BaseModel):
     name:str
@@ -28,5 +28,10 @@ class TicketResponse(BaseModel):
     priority:str
     customer_id:int
 
-    
-
+ 
+class TicketUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[Literal["Open", "Inprogress", "Closed"]] = None
+    customer_id: Optional[int] = None
