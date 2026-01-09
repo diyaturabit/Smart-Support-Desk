@@ -1,58 +1,18 @@
 from flask import Flask, request, jsonify
-from flask_swagger_ui import get_swaggerui_blueprint
 from pydantic import ValidationError
 import mysql.connector
 from schemas import CustomerCreate,CustomerResponse,TicketCreate,TicketResponse,TicketUpdate
-from database import db_config
-from db_utils import execute_query
+from database_connectivity.database import db_config
+from database_connectivity.db_utils import execute_query
 from exceptions import handle_exception
-from hashed_password import hash_password,verify_password
+from security.hashed_password import hash_password,verify_password
 from auth import login
-from security import SECRET_KEY, ALGORITHM, create_access_token
-
-import jwt
-from functools import wraps
+from security.security import SECRET_KEY, ALGORITHM, create_access_token
+from decorators import jwt_required,admin_required
+from Redis.connection import get_cache,set_cache,delete_cache
+from datetime import datetime
 
 app = Flask(__name__)
-
-SWAGGER_URL = '/docs'
-API_URL = '/static/swagger.json'  # JSON file with your API spec
-swaggerui_blueprint = get_swaggerui_blueprint(SWAGGER_URL, API_URL, config={'app_name': "My Flask API"})
-app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
-
-
-def jwt_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        auth_header = request.headers.get("Authorization")
-
-        if not auth_header:
-            return jsonify({"error": "Token missing"}), 401
-
-        try:
-            # Expect: "Bearer <token>"
-            token = auth_header.split(" ")[1]
-            payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            request.user = payload
-        except IndexError:
-            return jsonify({"error": "Invalid Authorization header format"}), 401
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"error": "Invalid token"}), 401
-
-        return f(*args, **kwargs)
-    return wrapper
-
-
-def admin_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if request.user.get("role") != "admin":
-            return jsonify({"error": "Admin access required"}), 403
-        return f(*args, **kwargs)
-    return wrapper
-
 
 @app.route("/")
 def home():
@@ -293,60 +253,20 @@ def customer_tickets(customer_id):
         return handle_exception(e)
 
 
-# @app.route("/dashboard", methods=["GET"])
-# @jwt_required
-# def dashboard():
-#     try:
-
-#         # Open tickets
-        
-#         sql= "SELECT COUNT(*) AS count FROM ticket WHERE status = 'Open'"
-#         tickets_count=execute_query(sql,fetchone=True)
-    
-
-#         # Closed tickets
-#         sql_closed="SELECT COUNT(*) AS count FROM ticket WHERE priority = 'High'"
-#         closed_tickets = execute_query(sql_closed,fetchone=True)
-
-#         # High priority tickets
-#         sql_high="SELECT COUNT(*) AS count FROM ticket WHERE priority = 'Low'"
-#         high_ticket=execute_query(sql_high,fetchone=True)
-    
-      
-
-#         return jsonify({
-#             "open":tickets_count["count"],
-#             "high": closed_tickets["count"],
-#             "low": high_ticket["count"]
-#         })
-
-#     except Exception as e:
-#         return handle_exception(e) 
-
-import redis
-import json
-
-
-
-# Connect to Redis
-r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
-
-# Cache TTL (seconds)
-CACHE_TTL = 5
-
 @app.route("/dashboard", methods=["GET"])
 @jwt_required
 def dashboard():
     try:
         # 1️⃣ Check Redis cache
-        cached = r.get("dashboard_stats")
-        if cached:
-            return jsonify(json.loads(cached))  # return cached JSON
+        cache_key = "dashboard_stats"
+        cache=get_cache(cache_key)
+        if cache:
+            return jsonify(cache),200
         total_customer = execute_query("SELECT COUNT(*) AS count FROM customer", fetchone=True)
         open_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE status='Open'", fetchone=True)
         high_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='High'", fetchone=True)
         medium_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='Medium'", fetchone=True)
-        low_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='Low'", fetchone=True)
+        low_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='Low'", fetchone   =True)
 
         stats = {
             "total_customer":total_customer["count"],
@@ -356,8 +276,7 @@ def dashboard():
             "low": low_tickets["count"]
         }
 
-        r.setex("dashboard_stats", CACHE_TTL, json.dumps(stats))
-
+        set_cache(cache_key,set_cache,ttl=100)
         return jsonify(stats),200
 
     except Exception as e:
@@ -400,31 +319,88 @@ def create_user():
 
     return jsonify({"message": "User created"}), 201
 
+@app.route("/delete_user/<int:user_id>", methods=["DELETE"])
+@jwt_required
+@admin_required
+def delete_user(user_id):
+    try:
+        sql = "DELETE FROM users WHERE id=%s"
+        rows_affected = execute_query(
+            sql,
+            values=(user_id,),
+            commit=True
+        )
+
+        if rows_affected == 0:
+            return jsonify({"message": "User not found"}), 404
+
+        return jsonify({"message": "User deleted successfully"}), 200
+
+    except Exception as e:
+        return handle_exception(e)
+
+@app.route("/get_user", methods=["GET"])
+@jwt_required
+@admin_required
+def get_user():
+    try:
+        sql = "SELECT id, email, role FROM users"
+        users = execute_query(sql, fetchall=True)
+
+        return jsonify({
+            "total": len(users),
+            "users": users
+        }), 200
+
+    except Exception as e:
+        return handle_exception(e)
+
+    
+
 
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
     email = data.get("email")
     password = data.get("password")
-    print(f"DAATA:",data)
+
     sql = "SELECT id, password_hash, role FROM users WHERE email=%s"
     user_login = execute_query(sql, (email,), fetchone=True)
-    print(user_login)
 
     if not user_login or not verify_password(password, user_login["password_hash"]):
         return jsonify({"error": "Invalid credentials"}), 401
 
-    # ✅ Only pass the payload
+    # ✅ Generate token
     token = create_access_token({
         "user_id": user_login["id"],
         "role": user_login["role"]
     })
+
+    # ✅ NEW: store login info
+    ip_address = request.remote_addr
+
+    log_sql = """
+    INSERT INTO login_logs (user_id, email, role, login_time, ip_address)
+    VALUES (%s, %s, %s, %s, %s)
+    """
+    execute_query(
+        log_sql,
+        (
+            user_login["id"],
+            email,
+            user_login["role"],
+            datetime.utcnow(),
+            ip_address
+        ),
+        commit=True
+    )
 
     return jsonify({
         "message": "Login Successful",
         "access_token": token,
         "role": user_login["role"]
     })
+
 print("SECRET_KEY:", SECRET_KEY)
 print("ALGORITHM:", ALGORITHM)
     
@@ -432,24 +408,3 @@ print("ALGORITHM:", ALGORITHM)
 
 if __name__=="__main__":
     app.run(debug=True)
-
-# def login_user():
-#     try:
-#         data=request.get_json()
-#         sql="SELECT id, password_hash FROM users WHERE email=%s",
-#         (data["email"],)
-#         user_login=execute_query(sql,fetchone=True)
-
-#         if not user_login:
-#             return jsonify({"error": "Invalid credentials"}), 401
-
-#         if not verify_password(data["password"], user_login["password_hash"]):
-#             return jsonify({"error": "Invalid credentials"}), 401
-#         return jsonify({
-#             "message":"Login Successfull"
-#         })
-#     except Exception as e:
-#         return handle_exception(e)
-        
-    
-

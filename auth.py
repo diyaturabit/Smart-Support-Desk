@@ -1,8 +1,9 @@
 from flask import request,jsonify
-from db_utils import execute_query
+from  database_connectivity.db_utils import execute_query
 from exceptions import handle_exception
-from hashed_password import *
-from security import create_access_token
+from security.hashed_password import *
+from security.security import create_access_token
+
 def login():
     try:
         data=request.get_json()

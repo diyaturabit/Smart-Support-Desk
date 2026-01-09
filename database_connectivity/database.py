@@ -5,24 +5,6 @@ db_config = {
     "database": "supportdesk"
 }
 
-
-# DATABASE_URL = "mysql+pymysql://root:root@localhost/supportdesk"
-
-# engine= create_engine(DATABASE_URL)
-# SessionLocal=sessionmaker(
-#     autocommit=False,
-#     autoflush=False,
-#     bind=engine
-# )
-# Base=declarative_base()
-
-# def get_db():
-#     db=SessionLocal()
-#     try:
-#         yield db
-#     finally:
-#         db.close()
-
 """CREATE TABLE ticket (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
@@ -71,5 +53,18 @@ db_config = {
     updated_at TIMESTAMP 
         DEFAULT CURRENT_TIMESTAMP 
         ON UPDATE CURRENT_TIMESTAMP
+);
+"""
+
+
+"""CREATE TABLE login_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    email VARCHAR(255),
+    role VARCHAR(50),
+    login_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(50),
+
+    FOREIGN KEY (user_id) REFERENCES users(id)
 );
 """

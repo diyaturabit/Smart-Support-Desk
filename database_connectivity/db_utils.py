@@ -1,5 +1,5 @@
 import mysql.connector
-from database import db_config
+from database_connectivity.database import db_config
 
 def execute_query(sql, values=None, fetchone=False, fetchall=False, commit=False):
     conn = cursor = None

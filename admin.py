@@ -1,5 +1,5 @@
-from hashed_password import hash_password
-from db_utils import execute_query
+from security.hashed_password import hash_password
+from database_connectivity.db_utils import execute_query
 
 sql = """
 INSERT INTO users (email, password_hash, role)
