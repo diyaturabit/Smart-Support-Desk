@@ -31,6 +31,7 @@ def create_customer():
             (customer.name, customer.age, customer.email, customer.company),
             commit=True
         )
+        delete_cache("dashboard_stats")
         return jsonify({"message": "Customer Added",
                         "customer_id": customer_id}), 201
 
@@ -68,6 +69,7 @@ def delete_customer(customer_id:int):
         customer_delete=execute_query(
             sql,(customer_id,),commit=True
         )
+        delete_cache("dashboard_stats")
         if customer_delete == 0:
             return jsonify({"message": "Customer not found"}), 404
 
@@ -84,6 +86,7 @@ def update_customer(customer_id):
         sql="UPDATE customer set name=%s,age=%s,email=%s, company=%s WHERE id=%s"
         values=(customer.name, customer.age, customer.email, customer.company,customer_id)
         customer_update=execute_query(sql,values,commit=True)
+        delete_cache("dashboard_stats")
         if customer_update == 0:
             return {"message": "Customer not found"}
         
@@ -103,6 +106,7 @@ def create_ticket():
         sql="INSERT INTO ticket (title,description,priority,customer_id) VALUES (%s,%s,%s,%s)"
         values=(ticket.title,ticket.description,ticket.priority,ticket.customer_id)
         ticket_create=execute_query(sql,values,commit=True)
+        delete_cache("dashboard_stats")
         return jsonify({"message": "Ticket Added",
                         "ticket_id":ticket_create})
     
@@ -139,6 +143,7 @@ def delete_ticket(ticket_id):
             (ticket_id,),
             commit=True
         )
+        delete_cache("dashboard_stats")
 
         if rows == 0:
             return jsonify({"message": "Ticket not found"}), 404
@@ -174,9 +179,9 @@ def update_ticket(ticket_id):
         )
 
         rows = execute_query(sql, values, commit=True)
-
+        delete_cache("dashboard_stats")
         if rows == 0:
-            return {"message": "Ticket not found"}, 404
+            return {"message": "Updated Successfull"}, 404
 
         return {"message": "Ticket updated"}, 200
 
@@ -219,7 +224,7 @@ def customer_ticket(customer_id):
                 "message":"No tickets registered for this customer"
             })
         return jsonify({
-            "customer_ticket":customer_tic
+            "customer_ticket":customer_tic or []
         })
 
     except Exception as e:
@@ -276,7 +281,7 @@ def dashboard():
             "low": low_tickets["count"]
         }
 
-        set_cache(cache_key,set_cache,ttl=100)
+        set_cache(cache_key,stats,ttl=30)
         return jsonify(stats),200
 
     except Exception as e:

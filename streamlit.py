@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-
+from Redis.data_viewing import to_dataframe,hide_columns,select_columns
 API_URL = "http://127.0.0.1:5000"
 
 st.set_page_config("Smart Support Desk", layout="wide")
@@ -9,7 +9,11 @@ st.set_page_config("Smart Support Desk", layout="wide")
 # Helpers
 # -----------------------
 def api_headers():
-    return {"Authorization": f"Bearer {st.session_state['token']}"}
+    if not st.session_state.get("token"):
+        return {}
+    return {
+        "Authorization": f"Bearer {st.session_state['token']}"
+    }
 
 def login(email, password):
     res = requests.post(f"{API_URL}/login", json={
@@ -35,10 +39,11 @@ def login_page():
 
     if st.button("Login"):
         if login(email, password):
+            st.success("Login successful")
             st.rerun()
 
 # ---------------------------
-# Dashboard
+# Dashboard 
 # ---------------------------
 def dashboard_page():
     st.header("📊 Dashboard")
@@ -58,90 +63,139 @@ def dashboard_page():
 # -----------------------
 def customers_page():
     st.header("👥 Customers")
+    customer_map = {}  # initialize empty
 
-    # VIEW
-    res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
-    if res.status_code == 200:
-        st.table(res.json())
-
-    # CREATE (Admin only)
-    # if st.session_state["role"] == "admin","Staff":
-    st.subheader("➕ Add Customer")
-    name = st.text_input("Name")
-    email = st.text_input("Email")
-    company = st.text_input("Company")
-    age = st.number_input("Age", 1)
+    # ---------- CREATE ----------
+    st.subheader("➕ Create Customer")
+    c_name = st.text_input("Name", key="c_create_name")
+    c_email = st.text_input("Email", key="c_create_email", placeholder="example@company.com")
+    c_company = st.text_input("Company", key="c_create_company")
+    c_age = st.number_input("Age", key="c_create_age", value=1, min_value=1)
 
     if st.button("Create Customer"):
         res = requests.post(
             f"{API_URL}/create_customer",
             headers=api_headers(),
-            json={"name": name, "email": email, "company": company, "age": age}
+            json={
+                "name": c_name,
+                "email": c_email,
+                "company": c_company,
+                "age": c_age
+            }
         )
-        if res.status_code == 200:
+        if res.status_code == 201:
             st.success("Customer created")
             st.rerun()
 
-    # UPDATE / DELETE
+    # ---------- SELECT ----------
     st.subheader("✏️ Update / ❌ Delete")
-    cid = st.number_input("Customer ID", 1)
 
-    col1, col2= st.columns(2)
+    # Fetch customers only when needed
+    res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+    if res.status_code == 200:
+        customers = res.json()["customers"]
+        customer_map = {c["email"]: c for c in customers}
+    else:
+        st.error("Failed to fetch customers")
+        return
 
-    with col1:
-        if st.button("Update Customer"):
-            res = requests.put(
-                f"{API_URL}/update_customer/{cid}",
-                headers=api_headers(),
-                json={"name": name, "email": email, "company": company, "age": age}
-            )
-            if res.status_code == 200:
-                st.success("Updated")
+    selected_email = st.selectbox(
+        "Select Customer",
+        options=[""] + list(customer_map.keys()),  # first option empty
+        key="customer_select"
+    )
+
+    if selected_email:  # if a customer is selected
+        c = customer_map[selected_email]
+
+        name = st.text_input("Name", c["name"])
+        email = st.text_input("Email", c["email"])
+        company = st.text_input("Company", c["company"])
+        age = st.number_input("Age", min_value=1, value=c["age"])
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("Update Customer"):
+                requests.put(
+                    f"{API_URL}/update_customer/{c['id']}",
+                    headers=api_headers(),
+                    json={
+                        "name": name,
+                        "email": email,
+                        "company": company,
+                        "age": age
+                    }
+                )
+                st.success("Customer updated")
                 st.rerun()
 
-    with col2:
-        if st.button("Delete Customer"):
-            res = requests.delete(
-                f"{API_URL}/delete_customer/{cid}",
-                headers=api_headers()
-            )
-            if res.status_code == 200:
-                st.success("Deleted")
+        with col2:
+            if st.button("Delete Customer"):
+                requests.delete(
+                    f"{API_URL}/delete_customer/{c['id']}",
+                    headers=api_headers()
+                )
+                st.success("Customer deleted")
                 st.rerun()
-  
+
+    # ---------- VIEW TABLE ----------
+    if st.button("View Customers"):
+        res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        if res.status_code == 200:
+            customers = res.json()["customers"]
+            df=to_dataframe(customers)
+            df=hide_columns(df,["id"])
+            df.index=df.index+1
+            st.dataframe(df,use_container_width=True)
+        else:
+            st.error("Failed to fetch customers")
 
 # -----------------------
 # Tickets
-# -----------------------
+
 def tickets_page():
-    st.header("🎫 Tickets")
-
-    # FILTERS
-    status = st.selectbox("Status", ["", "Open", "Closed"])
+    st.header("View Tickets")
+    status = st.selectbox("Status", ["", "Open","InProgress","Closed"])
     priority = st.selectbox("Priority", ["", "High", "Medium", "Low"])
+    # ================= VIEW =================
+    if st.button("View Tickets"):
+        params = {}
+        if status: 
+            params["status"] = status
+        if priority:
+            params["priority"] = priority
+        res = requests.get(f"{API_URL}/tickets", headers=api_headers(),params=params)
 
-    params = {}
-    if status:
-        params["status"] = status
-    if priority:
-        params["priority"] = priority
+        if res.status_code == 200:
+            tickets = res.json()["tickets"]
+            df=to_dataframe(tickets)
+            df=hide_columns(df,["id","customer_id"])
+            df.index=df.index+1
+            st.dataframe(df,use_container_width=True)
+        else:
+            st.error("Failed to load tickets")
 
-    res = requests.get(
-        f"{API_URL}/tickets",
-        headers=api_headers(),
-        params=params
-    )
-    if res.status_code == 200:
-        st.table(res.json()["tickets"])
-
-    # CREATE
+    # ================= CREATE =================
     st.subheader("➕ Create Ticket")
+
+    cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+    customers = cust_res.json()["customers"]
+
+    emails = [c["email"] for c in customers]
+    email = st.selectbox("Customer Email", [""] + emails)
+
     title = st.text_input("Title")
     description = st.text_area("Description")
-    priority = st.selectbox("Priority", ["High", "Medium", "Low"], key="p")
-    customer_id = st.number_input("Customer ID", 1)
+    priority = st.selectbox("Priority", ["High", "Medium", "Low"])
 
     if st.button("Create Ticket"):
+        if not email:
+            st.warning("Please select customer email")
+            return
+
+        customer_id = next(c["id"] for c in customers if c["email"] == email)
+
         res = requests.post(
             f"{API_URL}/create_ticket",
             headers=api_headers(),
@@ -152,42 +206,96 @@ def tickets_page():
                 "customer_id": customer_id
             }
         )
-        if res.status_code == 200:
+
+        if res.status_code == 201:
             st.success("Ticket created")
             st.rerun()
 
-    # UPDATE / DELETE
-    st.subheader("✏️ Update / ❌ Delete")
-    tid = st.number_input("Ticket ID", 1)
+       # ================= UPDATE =================
+    st.subheader("✏️ Update Ticket")
 
-    col1, col2 = st.columns(2)
+    # --- Select customer ---
+    cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+    customers = cust_res.json()["customers"]
+    cust_map = {c["email"]: c["id"] for c in customers}
 
-    with col1:
-        if st.button("Update Ticket"):
-            requests.put(
-            f"{API_URL}/update_ticket/{tid}",
+    customer_email = st.selectbox(
+        "Select Customer Email",
+        [""] + list(cust_map.keys()),
+        key="upd_customer"
+    )
+
+    if not customer_email:
+        st.stop()
+
+    customer_id = cust_map[customer_email]
+
+    # --- Get tickets ---
+    ticket_res = requests.get(
+        f"{API_URL}/customer/{customer_id}/tickets",
+        headers=api_headers()
+    )
+
+    tickets = ticket_res.json().get("customer_ticket", [])
+    if not tickets:
+        st.warning("No tickets found")
+        st.stop()
+
+    ticket_map = {f"{t['id']} - {t['title']}": t for t in tickets}
+
+    selected_ticket = st.selectbox(
+        "Select Ticket",
+        list(ticket_map.keys()),
+        key="upd_ticket"
+    )
+
+    t = ticket_map[selected_ticket]
+
+    # --- EDIT FIELDS (OUTSIDE BUTTON!) ---
+    title = st.text_input("Title", t["title"], key=f"upd_title{t['id']}")
+    description = st.text_input("Description", t["description"], key=f"upd_desc{t['id']}")
+    priority = st.selectbox(
+        "Priority",
+        ["High", "Medium", "Low"],
+        index=["High", "Medium", "Low"].index(t["priority"]),
+        key=f"upd_priority{t['id']}"
+    )
+    status = st.selectbox(
+        "Status",
+        ["Open", "Inprogress", "Closed"],
+        index=["Open", "Inprogress", "Closed"].index(t["status"]),
+        key=f"upd_status{t['id']}"
+    )
+
+    # --- UPDATE ---
+    if st.button("Update Ticket"):
+        res = requests.put(
+            f"{API_URL}/update_ticket/{t['id']}",
             headers=api_headers(),
             json={
                 "title": title,
                 "description": description,
                 "priority": priority,
-                "status": "Closed",
-                "customer_id": customer_id
-                
-                }
-            )
+                "status": status
+            }
+        )
 
-            st.success("Updated")
+        if res.status_code == 200:
+            st.success("Ticket updated")
+            st.rerun()
+        else:
+            st.error(res.text)
+
+
+    if st.button("Delete Ticket"):
+        res = requests.delete(
+            f"{API_URL}/delete_ticket/{t['id']}",
+            headers=api_headers()
+        )
+        if res.status_code == 200:
+            st.success("Ticket deleted")
             st.rerun()
 
-    with col2:
-        if st.button("Delete Ticket"):
-            requests.delete(
-                f"{API_URL}/delete_ticket/{tid}",
-                headers=api_headers()
-            )
-            st.success("Deleted")
-            st.rerun()
 
 # -----------------------
 # Users (Admin only)
@@ -232,7 +340,10 @@ def users_page():
             if res.status_code == 200:
                 users = res.json()["users"]
                 st.subheader("👥 Users List")
-                st.table(users)
+                df=to_dataframe(users)
+                df=hide_columns(df,["id"])
+                df.index+=1
+                st.dataframe(df,use_container_width=True)
             else:
                 st.error("Failed to fetch users")
 
