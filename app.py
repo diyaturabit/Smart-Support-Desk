@@ -11,6 +11,7 @@ from security.security import SECRET_KEY, ALGORITHM, create_access_token
 from decorators import jwt_required,admin_required
 from Redis.connection import get_cache,set_cache,delete_cache
 from datetime import datetime
+from logs.activity_logger import log_activity
 
 app = Flask(__name__)
 
@@ -25,15 +26,23 @@ def create_customer():
         return jsonify({"error": "Request must be JSON"}), 400
     try:
         customer = CustomerCreate(**request.get_json())
-        sql = "INSERT INTO customer (name, age, email, company) VALUES (%s, %s, %s, %s)"
+        staff_id=request.user.get("user_id")
+        sql = "INSERT INTO customer (name, age, email, company,created_by) VALUES (%s, %s, %s, %s,%s)"
         customer_id = execute_query(
             sql,
-            (customer.name, customer.age, customer.email, customer.company),
+            (customer.name, customer.age, customer.email, customer.company,staff_id),
             commit=True
         )
+        log_activity(user=request.user,
+                     action="CREATE",
+                     entity="CUSTOMER",
+                     entity_id=customer_id,
+                     description=f"Created Customer {customer.name} ({customer.email})")
+        
         delete_cache("dashboard_stats")
         return jsonify({"message": "Customer Added",
-                        "customer_id": customer_id}), 201
+                        "customer_id": customer_id,
+                        "staff_id":staff_id}), 201
 
     except Exception as e:
         return handle_exception(e)
@@ -69,6 +78,14 @@ def delete_customer(customer_id:int):
         customer_delete=execute_query(
             sql,(customer_id,),commit=True
         )
+        log_activity(
+    user=request.user,
+    action="DELETE",
+    entity="Customer",
+    entity_id=customer_id,
+    description="Customer deleted"
+)
+
         delete_cache("dashboard_stats")
         if customer_delete == 0:
             return jsonify({"message": "Customer not found"}), 404
@@ -86,6 +103,12 @@ def update_customer(customer_id):
         sql="UPDATE customer set name=%s,age=%s,email=%s, company=%s WHERE id=%s"
         values=(customer.name, customer.age, customer.email, customer.company,customer_id)
         customer_update=execute_query(sql,values,commit=True)
+        log_activity(user=request.user,
+                     action="UPDATE",
+                     entity="CUSTOMER",
+                     entity_id=customer_id,
+                     description=f"UPDATED Customer {customer.name} ({customer.email})")
+        
         delete_cache("dashboard_stats")
         if customer_update == 0:
             return {"message": "Customer not found"}
@@ -106,12 +129,20 @@ def create_ticket():
         sql="INSERT INTO ticket (title,description,priority,customer_id) VALUES (%s,%s,%s,%s)"
         values=(ticket.title,ticket.description,ticket.priority,ticket.customer_id)
         ticket_create=execute_query(sql,values,commit=True)
+        log_activity(
+            user=request.user,
+            action="CREATE",
+            entity="Ticket",
+            entity_id=ticket_create,
+            description=f"Created ticket '{ticket.title}' for customer_id {ticket.customer_id}"
+        )
         delete_cache("dashboard_stats")
         return jsonify({"message": "Ticket Added",
                         "ticket_id":ticket_create})
-    
+        
+
     except Exception as e:
-        handle_exception(e)
+        return handle_exception(e)
 
     except mysql.connector.IntegrityError as e:
         return jsonify ({"error": "Invalid Customer_id"}),400
@@ -142,6 +173,13 @@ def delete_ticket(ticket_id):
             "DELETE FROM ticket WHERE id=%s",
             (ticket_id,),
             commit=True
+        )
+        log_activity(
+            user=request.user,
+            action="DELETE",
+            entity="Ticket",
+            entity_id=ticket_id,
+            description=f"DELETED ticket"
         )
         delete_cache("dashboard_stats")
 
@@ -179,6 +217,12 @@ def update_ticket(ticket_id):
         )
 
         rows = execute_query(sql, values, commit=True)
+        log_activity(user=request.user,
+                     action="UPDATE",
+                     entity="Ticket",
+                     entity_id=ticket_id,
+    description=f"Updated ticket status to {data.status}"
+        )
         delete_cache("dashboard_stats")
         if rows == 0:
             return {"message": "Updated Successfull"}, 404
@@ -214,7 +258,6 @@ def list_tickets():
 
 @app.route("/customer/<int:customer_id>/tickets",methods=["GET"])
 @jwt_required
-@admin_required
 def customer_ticket(customer_id):
     try:
         sql="SELECT * FROM ticket WHERE customer_id=%s"
@@ -232,7 +275,6 @@ def customer_ticket(customer_id):
         
 @app.route("/customers/<int:customer_id>/tickets",methods=["GET"])
 @jwt_required
-@admin_required
 def customer_tickets(customer_id):
     try:
         status=request.args.get("status")
@@ -257,37 +299,67 @@ def customer_tickets(customer_id):
     except Exception as e:
         return handle_exception(e)
 
-
 @app.route("/dashboard", methods=["GET"])
 @jwt_required
 def dashboard():
     try:
-        # 1️⃣ Check Redis cache
+        # --- Check Redis cache ---
         cache_key = "dashboard_stats"
-        cache=get_cache(cache_key)
+        cache = get_cache(cache_key)
         if cache:
-            return jsonify(cache),200
-        total_customer = execute_query("SELECT COUNT(*) AS count FROM customer", fetchone=True)
-        open_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE status='Open'", fetchone=True)
-        high_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='High'", fetchone=True)
-        medium_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='Medium'", fetchone=True)
-        low_tickets = execute_query("SELECT COUNT(*) AS count FROM ticket WHERE priority='Low'", fetchone   =True)
+            return jsonify(cache), 200
 
-        stats = {
-            "total_customer":total_customer["count"],
-            "open": open_tickets["count"],
-            "high": high_tickets["count"],
-            "medium": medium_tickets["count"],
-            "low": low_tickets["count"]
+        # --- Combined stats query ---
+        stats_query = """
+        SELECT
+            (SELECT COUNT(*) FROM customer) AS total_customer,
+            (SELECT COUNT(*) FROM ticket WHERE status='Open') AS open_tickets,
+            (SELECT COUNT(*) FROM ticket WHERE priority='High') AS high_tickets,
+            (SELECT COUNT(*) FROM ticket WHERE priority='Medium') AS medium_tickets,
+            (SELECT COUNT(*) FROM ticket WHERE priority='Low') AS low_tickets
+        """
+        stats = execute_query(stats_query, fetchone=True)
+
+        # --- Customer & Ticket summary (latest 50 customers) ---
+        customer_ticket_query = """
+        SELECT 
+            c.name AS customer_name,
+            c.email AS customer_email,
+            u.email AS staff_email,
+            COUNT(t.id) AS ticket_count
+        FROM customer c
+        LEFT JOIN users u ON c.created_by = u.id
+        LEFT JOIN ticket t ON t.customer_id = c.id
+        GROUP BY c.id, u.email
+        ORDER BY c.id DESC
+        LIMIT 50
+        """
+        customer_ticket = execute_query(customer_ticket_query,fetchall=True)
+
+        # --- Combine into one dictionary ---
+        data = {
+            "total_customer": stats["total_customer"],
+            "open": stats["open_tickets"],
+            "high": stats["high_tickets"],
+            "medium": stats["medium_tickets"],
+            "low": stats["low_tickets"],
+            "customer_ticket": customer_ticket
         }
 
-        set_cache(cache_key,stats,ttl=30)
-        return jsonify(stats),200
+        # --- Cache for 2 minutes ---
+        set_cache(cache_key, data, ttl=120)
+
+        return jsonify(data), 200
 
     except Exception as e:
         return handle_exception(e)
 
-
+@app.route("/dashboard/admin",methods=["GET"])
+def admin_dashboard():
+    try:
+        pass
+    except:
+        pass
 
 @app.route("/users", methods=["POST"])
 @jwt_required
@@ -361,6 +433,20 @@ def get_user():
         return handle_exception(e)
 
     
+@app.route("/activity_logs", methods=["GET"])
+@jwt_required
+@admin_required
+def get_activity_logs():
+    logs = execute_query(
+        """
+        SELECT user_email, role, action, entity, description, created_at
+        FROM activity_log
+        ORDER BY created_at DESC
+        LIMIT 15
+        """,
+        fetchall=True
+    )
+    return jsonify({"logs": logs})
 
 
 @app.route("/login", methods=["POST"])
@@ -381,7 +467,6 @@ def login():
         "role": user_login["role"]
     })
 
-    # ✅ NEW: store login info
     ip_address = request.remote_addr
 
     log_sql = """

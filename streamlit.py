@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from Redis.data_viewing import to_dataframe,hide_columns,select_columns
+from Redis.data_viewing import to_dataframe,hide_columns,select_columns,rename_columns
 API_URL = "http://127.0.0.1:5000"
 
 st.set_page_config("Smart Support Desk", layout="wide")
@@ -45,17 +45,102 @@ def login_page():
 # ---------------------------
 # Dashboard 
 # ---------------------------
-def dashboard_page():
-    st.header("📊 Dashboard")
+def general_dashboard(stats):
+    st.subheader("📊 Overview")
 
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Customers", stats["total_customer"])
+    c2.metric("Open Tickets", stats["open"])
+    c3.metric("High Priority", stats["high"])
+
+    c4, c5 = st.columns(2)
+    c4.metric("Medium Priority", stats["medium"])
+    c5.metric("Low Priority", stats["low"])
+
+    
+
+def dashboard_page():
     res = requests.get(f"{API_URL}/dashboard", headers=api_headers())
+
+    if res.status_code != 200:
+        st.error("Failed to load dashboard")
+        return
+
+    stats = res.json()
+    role = st.session_state.get("role")
+
+    if role == "admin":
+        admin_dashboard(stats)
+    else:
+        staff_dashboard(stats)
+
+def admin_dashboard(stats):
+    st.header("🧑‍💼 Admin Dashboard")
+
+    # --- General stats ---
+    c1, c2, c3 = st.columns(3)
+    c1.metric("👥 Total Customers", stats["total_customer"])
+    c2.metric("📂 Open Tickets", stats["open"])
+    c3.metric("🔥 High Priority", stats["high"])
+
+    c4, c5 = st.columns(2)
+    c4.metric("⚡ Medium Priority", stats["medium"])
+    c5.metric("🟢 Low Priority", stats["low"])
+
+    st.divider()
+    st.subheader("👥 Customers & Ticket Summary")
+
+    # --- Table of customers and tickets ---
+    customer_ticket = stats.get("customer_ticket", [])
+    if customer_ticket:
+        df = to_dataframe(customer_ticket)
+        df = rename_columns(df, {
+            "name": "Customer Name",
+            "email": "Customer Email",
+            "staff_email": "Registered By",
+            "ticket_count": "No. of Tickets"
+        })
+        df.index += 1  # Start index from 1
+        st.dataframe(df, use_container_width=True, height=400)
+    else:
+        st.info("No customer data available")
+
+
+    st.subheader("🧾 Activity Logs")
+    
+    res = requests.get(f"{API_URL}/activity_logs", headers=api_headers())
+    
     if res.status_code == 200:
-        stats = res.json()
-        st.metric("Total Customers", stats["total_customer"])
-        st.metric("Open Tickets", stats["open"])
-        st.metric("High Priority", stats["high"])
-        st.metric("Medium Priority", stats["medium"])
-        st.metric("Low Priority", stats["low"])
+        logs = res.json()["logs"]
+    
+        df = to_dataframe(logs)
+        df = rename_columns(df, {
+            "user_email": "User",
+            "role": "Role",
+            "action": "Action",
+            "entity": "Entity",
+            "description": "Details",
+            "created_at": "Time"
+        })
+    
+        df.index += 1
+        st.dataframe(df, use_container_width=True, height=400)
+    else:
+        st.error("Failed to load activity logs")
+
+    st.divider()
+    st.info("Admin can view all customers, tickets, reports & analytics")
+
+
+def staff_dashboard(stats):
+    st.header("👨‍💻 Staff Dashboard")
+
+    c1, c2,c3 = st.columns(3)
+    c1.metric("📂 Open Tickets", stats["open"])
+    c2.metric("🔥 High Priority Tickets", stats["high"])
+    c3.metric("🔥 Low Priority Tickets", stats["low"])
+
+    st.success("Focus on resolving open and high-priority tickets")
 
 
 # -----------------------
@@ -81,6 +166,7 @@ def customers_page():
                 "email": c_email,
                 "company": c_company,
                 "age": c_age
+                
             }
         )
         if res.status_code == 201:
@@ -90,7 +176,6 @@ def customers_page():
     # ---------- SELECT ----------
     st.subheader("✏️ Update / ❌ Delete")
 
-    # Fetch customers only when needed
     res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
     if res.status_code == 200:
         customers = res.json()["customers"]
@@ -146,6 +231,9 @@ def customers_page():
             customers = res.json()["customers"]
             df=to_dataframe(customers)
             df=hide_columns(df,["id"])
+            prior=["name","email","company","age"]
+            ordered=prior + [c for c in df.columns if c not in prior]
+            df=df[ordered]
             df.index=df.index+1
             st.dataframe(df,use_container_width=True)
         else:
@@ -171,6 +259,9 @@ def tickets_page():
             tickets = res.json()["tickets"]
             df=to_dataframe(tickets)
             df=hide_columns(df,["id","customer_id"])
+            prior=["title","description","priority","status"]
+            ordered=prior + [c for c in df.columns if c not in prior]
+            df=df[ordered]
             df.index=df.index+1
             st.dataframe(df,use_container_width=True)
         else:

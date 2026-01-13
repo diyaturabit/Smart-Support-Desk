@@ -68,3 +68,17 @@ db_config = {
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 """
+
+
+"""CREATE TABLE activity_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    user_email VARCHAR(255),
+    role VARCHAR(20),
+    action VARCHAR(100),
+    entity VARCHAR(50),
+    entity_id INT,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+"""

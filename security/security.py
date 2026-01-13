@@ -14,10 +14,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 750
 # Create JWT
 # ----------------------
 def create_access_token(data: dict):
-    """
-    Creates a JWT token with an expiration.
-    Ensures SECRET_KEY is always a valid string.
-    """
+
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
