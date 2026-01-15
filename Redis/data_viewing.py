@@ -28,3 +28,8 @@ def rename_columns(df: pd.DataFrame, mapping: dict):
     Rename columns for display
     """
     return df.rename(columns=mapping)
+
+def timing(df:pd.DataFrame,column_name,fmt="%d %b %H:%M"):
+    if column_name in df.columns:
+        df[column_name] = pd.to_datetime(df[column_name]).dt.strftime(fmt)
+        return df

@@ -29,7 +29,12 @@ db_config = {
 );
 """
 
-
+"""ALTER TABLE ticket
+ADD COLUMN assigned_to INT NULL,
+ADD COLUMN assigned_at DATETIME NULL,
+ADD CONSTRAINT fk_ticket_assigned_user
+FOREIGN KEY (assigned_to) REFERENCES users(id);
+"""
 
 """CREATE TABLE customer (
     id INT AUTO_INCREMENT PRIMARY KEY,

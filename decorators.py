@@ -16,8 +16,10 @@ def jwt_required(f):
         try:
             # Expect: "Bearer <token>"
             token = auth_header.split(" ")[1]
+
             payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
             request.user = payload
+           
         except IndexError:
             return jsonify({"error": "Invalid Authorization header format"}), 401
         except jwt.ExpiredSignatureError:

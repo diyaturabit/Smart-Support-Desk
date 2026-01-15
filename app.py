@@ -27,6 +27,7 @@ def create_customer():
     try:
         customer = CustomerCreate(**request.get_json())
         staff_id=request.user.get("user_id")
+
         sql = "INSERT INTO customer (name, age, email, company,created_by) VALUES (%s, %s, %s, %s,%s)"
         customer_id = execute_query(
             sql,
@@ -34,10 +35,10 @@ def create_customer():
             commit=True
         )
         log_activity(user=request.user,
-                     action="CREATE",
+                     action="CREATED CUSTOMER",
                      entity="CUSTOMER",
                      entity_id=customer_id,
-                     description=f"Created Customer {customer.name} ({customer.email})")
+                     description=f'Created Customer {customer.name}"')
         
         delete_cache("dashboard_stats")
         return jsonify({"message": "Customer Added",
@@ -63,9 +64,17 @@ def create_customer():
 def get_customer():
     try:
         sql="SELECT * from customer"
+        ticket_entry_query="""
+        SELECT DISTINCT c.id, c.name, c.email
+        FROM customer c
+        JOIN ticket t ON t.customer_id = c.id
+        WHERE t.status != 'Closed'
+        """
         customers=execute_query(sql,fetchall=True)
+        ticket_entry=execute_query(ticket_entry_query,fetchall=True)
         return jsonify({"total": len(customers),
-                        "customers": customers }), 200
+                        "customers": customers,
+                         "ticket_entry":ticket_entry }), 200
 
     except Exception as e:
         return handle_exception(e)
@@ -80,10 +89,11 @@ def delete_customer(customer_id:int):
         )
         log_activity(
     user=request.user,
-    action="DELETE",
+    action="CUSTOMER DELETED",
     entity="Customer",
     entity_id=customer_id,
-    description="Customer deleted"
+    description=f'{request.user["role"].capitalize()} {request.user["email"]} Deleted Customer ID: {customer_id}"'
+
 )
 
         delete_cache("dashboard_stats")
@@ -103,11 +113,15 @@ def update_customer(customer_id):
         sql="UPDATE customer set name=%s,age=%s,email=%s, company=%s WHERE id=%s"
         values=(customer.name, customer.age, customer.email, customer.company,customer_id)
         customer_update=execute_query(sql,values,commit=True)
-        log_activity(user=request.user,
-                     action="UPDATE",
-                     entity="CUSTOMER",
-                     entity_id=customer_id,
-                     description=f"UPDATED Customer {customer.name} ({customer.email})")
+        if customer_update!=customer_update:
+            log_activity(user=request.user,
+                         action="CUSTOMER_UPDATED",
+                         entity="CUSTOMER",
+                         entity_id=customer_id,
+                         description=(f'updated customer (ID: {customer_id})'
+)
+
+)
         
         delete_cache("dashboard_stats")
         if customer_update == 0:
@@ -131,10 +145,11 @@ def create_ticket():
         ticket_create=execute_query(sql,values,commit=True)
         log_activity(
             user=request.user,
-            action="CREATE",
-            entity="Ticket",
+            action="TICKET_CREATED",
+            entity="TICKET",
             entity_id=ticket_create,
-            description=f"Created ticket '{ticket.title}' for customer_id {ticket.customer_id}"
+            description=f'Created Ticket ID{ticket}"'
+
         )
         delete_cache("dashboard_stats")
         return jsonify({"message": "Ticket Added",
@@ -176,8 +191,8 @@ def delete_ticket(ticket_id):
         )
         log_activity(
             user=request.user,
-            action="DELETE",
-            entity="Ticket",
+            action="DELETED TICKET",
+            entity="TICKET",
             entity_id=ticket_id,
             description=f"DELETED ticket"
         )
@@ -204,7 +219,7 @@ def update_ticket(ticket_id):
             priority = COALESCE(%s, priority),
             status = COALESCE(%s, status),
             customer_id = COALESCE(%s, customer_id)
-        WHERE id = %s
+        WHERE id = %s AND status!='Closed'
         """
 
         values = (
@@ -218,10 +233,11 @@ def update_ticket(ticket_id):
 
         rows = execute_query(sql, values, commit=True)
         log_activity(user=request.user,
-                     action="UPDATE",
-                     entity="Ticket",
+                     action="UPDATED TICKET",
+                     entity="TICKET",
                      entity_id=ticket_id,
-    description=f"Updated ticket status to {data.status}"
+                    description=f'Updated ticket #{ticket_id} status to "{data.status}"'
+
         )
         delete_cache("dashboard_stats")
         if rows == 0:
@@ -262,12 +278,15 @@ def customer_ticket(customer_id):
     try:
         sql="SELECT * FROM ticket WHERE customer_id=%s"
         customer_tic=execute_query(sql,(customer_id,),fetchall=True)
+        closed_ticket_query="SELECT * from ticket where status!='Closed'"
+        closed_ticket=execute_query(closed_ticket_query,fetchone=True)
         if customer_tic==0:
             return jsonify({
                 "message":"No tickets registered for this customer"
             })
         return jsonify({
-            "customer_ticket":customer_tic or []
+            "customer_ticket":customer_tic or [],
+            "closed_ticket":closed_ticket
         })
 
     except Exception as e:
@@ -334,8 +353,10 @@ def dashboard():
         ORDER BY c.id DESC
         LIMIT 50
         """
-        customer_ticket = execute_query(customer_ticket_query,fetchall=True)
 
+        customer_ticket = execute_query(customer_ticket_query,fetchall=True)
+        unassigned_ticket_query="SELECT id,title from ticket WHERE status='Open' AND assigned_to is NULL"
+        unassigned_ticket=execute_query(unassigned_ticket_query,fetchall=True)
         # --- Combine into one dictionary ---
         data = {
             "total_customer": stats["total_customer"],
@@ -343,7 +364,8 @@ def dashboard():
             "high": stats["high_tickets"],
             "medium": stats["medium_tickets"],
             "low": stats["low_tickets"],
-            "customer_ticket": customer_ticket
+            "customer_ticket": customer_ticket,
+            "unassigned_ticket":unassigned_ticket
         }
 
         # --- Cache for 2 minutes ---
@@ -432,6 +454,34 @@ def get_user():
     except Exception as e:
         return handle_exception(e)
 
+@app.route("/tickets/<int:ticket_id>/assign",methods=["PUT"])
+@jwt_required
+@admin_required
+def ticket_assignment(ticket_id):
+    try:
+        data=request.get_json()
+        agent_id=data.get("agent_id")
+        sql="UPDATE ticket SET assigned_to=%s,assigned_at=NOW(),status='Inprogress' where id=%s and assigned_to IS NULL"
+        rows=execute_query(sql,(agent_id,ticket_id),commit=True)
+        log_activity(
+            user=request.user,
+            action="Ticket Assigned",
+            entity="Ticket",
+            entity_id=ticket_id,
+            description=f"Assigned ticket to agent_id={agent_id}, Status->Inprogress"
+        )
+        if rows==0:
+            return jsonify({"message":"Ticket already assigned or not found"})
+        
+        return jsonify({
+            "message":"Ticket Assigned"
+        })
+    except Exception as e:
+        return handle_exception(e)
+        
+
+
+
     
 @app.route("/activity_logs", methods=["GET"])
 @jwt_required
@@ -464,6 +514,7 @@ def login():
     # ✅ Generate token
     token = create_access_token({
         "user_id": user_login["id"],
+        "email":email,
         "role": user_login["role"]
     })
 

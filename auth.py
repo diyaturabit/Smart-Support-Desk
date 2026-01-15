@@ -17,6 +17,7 @@ def login():
         
         tokens=create_access_token({
             "user_id":user_login["id"],
+            "email":email,
             "role":user_login["role"]
         })
 
