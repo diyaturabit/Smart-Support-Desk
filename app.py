@@ -70,11 +70,17 @@ def get_customer():
         JOIN ticket t ON t.customer_id = c.id
         WHERE t.status != 'Closed'
         """
+
+        admin_ticket_query="""SELECT DISTINCT c.id, c.name, c.email
+        FROM customer c
+        JOIN ticket t ON t.customer_id = c.id"""
         customers=execute_query(sql,fetchall=True)
+        admin_ticket=execute_query(admin_ticket_query,fetchall=True)
         ticket_entry=execute_query(ticket_entry_query,fetchall=True)
         return jsonify({"total": len(customers),
                         "customers": customers,
-                         "ticket_entry":ticket_entry }), 200
+                         "ticket_entry":ticket_entry,
+                          "admin_ticket":admin_ticket }), 200
 
     except Exception as e:
         return handle_exception(e)
@@ -110,6 +116,7 @@ def delete_customer(customer_id:int):
 def update_customer(customer_id):
     try:
         customer=CustomerCreate(**request.get_json())
+        
         sql="UPDATE customer set name=%s,age=%s,email=%s, company=%s WHERE id=%s"
         values=(customer.name, customer.age, customer.email, customer.company,customer_id)
         customer_update=execute_query(sql,values,commit=True)
@@ -205,11 +212,22 @@ def delete_ticket(ticket_id):
 
     except Exception as e:
         return handle_exception(e)
+    
 @app.route("/update_ticket/<int:ticket_id>", methods=["PUT"])
 @jwt_required
 def update_ticket(ticket_id):
     try:
-        data = TicketUpdate(**request.get_json())
+        data = request.get_json()
+        role = request.user["role"]
+
+        title = data.get("title")
+        description = data.get("description")
+        priority = data.get("priority")
+        status = data.get("status")
+
+        # 🔐 Staff rule
+        if role == "staff" and status and status != "Closed":
+            return jsonify({"error": "Staff can only close tickets"}), 403
 
         sql = """
         UPDATE ticket
@@ -217,80 +235,110 @@ def update_ticket(ticket_id):
             title = COALESCE(%s, title),
             description = COALESCE(%s, description),
             priority = COALESCE(%s, priority),
-            status = COALESCE(%s, status),
-            customer_id = COALESCE(%s, customer_id)
-        WHERE id = %s AND status!='Closed'
+            status = COALESCE(%s, status)
+        WHERE id = %s
         """
 
         values = (
-            data.title,
-            data.description,
-            data.priority,
-            data.status,
-            data.customer_id,
+            title,
+            description,
+            priority,
+            status,
             ticket_id
         )
 
         rows = execute_query(sql, values, commit=True)
-        log_activity(user=request.user,
-                     action="UPDATED TICKET",
-                     entity="TICKET",
-                     entity_id=ticket_id,
-                    description=f'Updated ticket #{ticket_id} status to "{data.status}"'
 
-        )
-        delete_cache("dashboard_stats")
         if rows == 0:
-            return {"message": "Updated Successfull"}, 404
+            return jsonify({"error": "Ticket not found"}), 404
 
-        return {"message": "Ticket updated"}, 200
+        return jsonify({"message": "Ticket updated successfully"}), 200
 
     except Exception as e:
         return handle_exception(e)
-
-@app.route("/tickets",methods=["GET"])
+    
+@app.route("/tickets", methods=["GET"])
 @jwt_required
 def list_tickets():
     try:
-        status=request.args.get("status")
-        priority=request.args.get("priority")
-        sql="SELECT * from ticket WHERE 1=1"
-        query=[]
+        status = request.args.get("status")
+        priority = request.args.get("priority")
+
+        user_id = request.user["user_id"]
+        role = request.user["role"]
+
+        sql = "SELECT * FROM ticket WHERE 1=1"
+        params = []
+
         if status:
-            sql+=" AND status=%s"
-            query.append(status)
+            sql += " AND status = %s"
+            params.append(status)
+
         if priority:
-            sql+=" AND priority=%s"
-            query.append(priority)
-        
-        tickets=execute_query(sql,tuple(query),fetchall=True)
-        return jsonify ({
-            "count":len(tickets),
-            "tickets":tickets
-        })
+            sql += " AND priority = %s"
+            params.append(priority)
+
+        tickets = execute_query(sql, tuple(params), fetchall=True)
+        # -------- ASSIGNED TO LOGGED-IN USER --------
+        assigned_sql = """
+        SELECT 
+            t.id,
+            t.title,
+            t.status,
+            t.priority,
+            t.created_at,
+            c.name  AS customer_name,
+            c.email AS customer_email
+        FROM ticket t
+        JOIN customer c ON c.id = t.customer_id
+        WHERE t.assigned_to = %s
+        ORDER BY t.created_at DESC
+        """
+    
+        assigned_to_user = execute_query(
+            assigned_sql,
+            (user_id,),
+            fetchall=True
+        )
+
+        return jsonify({
+            "count": len(tickets),
+            "tickets": tickets,
+            "assigned_to_user":assigned_to_user
+
+        }), 200
 
     except Exception as e:
         return handle_exception(e)
 
-@app.route("/customer/<int:customer_id>/tickets",methods=["GET"])
+
+@app.route("/customer/<int:customer_id>/tickets", methods=["GET"])
 @jwt_required
 def customer_ticket(customer_id):
     try:
-        sql="SELECT * FROM ticket WHERE customer_id=%s"
-        customer_tic=execute_query(sql,(customer_id,),fetchall=True)
-        closed_ticket_query="SELECT * from ticket where status!='Closed'"
-        closed_ticket=execute_query(closed_ticket_query,fetchone=True)
-        if customer_tic==0:
+        role=request.user.get("role")
+        sql = """
+        SELECT * FROM ticket
+        WHERE customer_id = %s 
+        """
+        params=[customer_id]
+        if role=="staff":
+            sql+=" AND status!='Closed'"
+        tickets = execute_query(sql,tuple(params), fetchall=True)
+
+        if not tickets:
             return jsonify({
-                "message":"No tickets registered for this customer"
-            })
+                "tickets": [],
+                "message": "No tickets found for this customer"
+            }), 200
+
         return jsonify({
-            "customer_ticket":customer_tic or [],
-            "closed_ticket":closed_ticket
-        })
+            "tickets": tickets
+        }), 200
 
     except Exception as e:
         return handle_exception(e)
+
         
 @app.route("/customers/<int:customer_id>/tickets",methods=["GET"])
 @jwt_required
@@ -324,6 +372,7 @@ def dashboard():
     try:
         # --- Check Redis cache ---
         cache_key = "dashboard_stats"
+        user_id=request.user.get("user_id")
         cache = get_cache(cache_key)
         if cache:
             return jsonify(cache), 200
@@ -335,9 +384,10 @@ def dashboard():
             (SELECT COUNT(*) FROM ticket WHERE status='Open') AS open_tickets,
             (SELECT COUNT(*) FROM ticket WHERE priority='High') AS high_tickets,
             (SELECT COUNT(*) FROM ticket WHERE priority='Medium') AS medium_tickets,
-            (SELECT COUNT(*) FROM ticket WHERE priority='Low') AS low_tickets
+            (SELECT COUNT(*) FROM ticket WHERE priority='Low') AS low_tickets,
+            (SELECT COUNT(*) FROM ticket WHERE assigned_to = %s and status='Inprogress') AS assigned_count
         """
-        stats = execute_query(stats_query, fetchone=True)
+        stats = execute_query(stats_query,(user_id,),fetchone=True)
 
         # --- Customer & Ticket summary (latest 50 customers) ---
         customer_ticket_query = """
@@ -365,7 +415,8 @@ def dashboard():
             "medium": stats["medium_tickets"],
             "low": stats["low_tickets"],
             "customer_ticket": customer_ticket,
-            "unassigned_ticket":unassigned_ticket
+            "unassigned_ticket":unassigned_ticket,
+            "assigned_count":stats["assigned_count"]
         }
 
         # --- Cache for 2 minutes ---

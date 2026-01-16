@@ -204,10 +204,12 @@ def admin_dashboard(stats):
 def staff_dashboard(stats):
     st.header("👨‍💻 Staff Dashboard")
 
-    c1, c2,c3 = st.columns(3)
+    c1, c2,c3,c4 = st.columns(4)
     c1.metric("📂 Open Tickets", stats["open"])
     c2.metric("🔥 High Priority Tickets", stats["high"])
     c3.metric("🔥 Low Priority Tickets", stats["low"])
+    c4.metric("Assigned Ticket",stats["assigned_count"])
+
 
     st.success("Focus on resolving open and high-priority tickets")
 
@@ -301,153 +303,220 @@ def customers_page():
         df.index += 1
         st.dataframe(df, use_container_width=True, height=450)
 
-# -----------------------
-# Tickets
 
+# ----------------- MAIN PAGE -----------------
 def tickets_page():
-    st.header("View Tickets")
-    status = st.selectbox("Status", ["", "Open","InProgress","Closed"])
-    priority = st.selectbox("Priority", ["", "High", "Medium", "Low"])
-    # ================= VIEW =================
-    if st.button("View Tickets"):
-        params = {}
-        if status: 
-            params["status"] = status
-        if priority:
-            params["priority"] = priority
-        res = requests.get(f"{API_URL}/tickets", headers=api_headers(),params=params)
+    st.header("🎟️ Tickets Management")
 
-        if res.status_code == 200:
-            tickets = res.json()["tickets"]
-            df=to_dataframe(tickets)
-            df=hide_columns(df,["id","customer_id"])
-            prior=["title","description","priority","status"]
-            ordered=prior + [c for c in df.columns if c not in prior]
-            df=df[ordered]
-            df.index=df.index+1
-            st.dataframe(df,use_container_width=True)
-        else:
-            st.error("Failed to load tickets")
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "➕ Create",
+        "✏️ Update / Delete",
+        "📋 View Tickets",
+        "🧑‍💻 Assigned To Me"
+    ])
 
-    # ================= CREATE =================
-    st.subheader("➕ Create Ticket")
+    # =====================================================
+    # TAB 1 : CREATE TICKET
+    # =====================================================
+    with tab1:
+        st.subheader("➕ Create Ticket")
 
-    cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
-    customers = cust_res.json()["customers"]
+        cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        customers = cust_res.json().get("customers", [])
 
-    emails = [c["email"] for c in customers]
-    email = st.selectbox("Customer Email", [""] + emails)
-
-    title = st.text_input("Title")
-    description = st.text_area("Description")
-    priority = st.selectbox("Priority", ["High", "Medium", "Low"])
-
-    if st.button("Create Ticket"):
-        if not email:
-            st.warning("Please select customer email")
+        if not customers:
+            st.warning("No customers found")
             return
 
-        customer_id = next(c["id"] for c in customers if c["email"] == email)
+        emails = [c["email"] for c in customers]
+        email = st.selectbox("Customer Email", [""] + emails)
 
-        res = requests.post(
-            f"{API_URL}/create_ticket",
-            headers=api_headers(),
-            json={
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "customer_id": customer_id
-            }
-        )
+        title = st.text_input("Title")
+        description = st.text_area("Description")
+        priority = st.selectbox("Priority", ["High", "Medium", "Low"])
 
-        if res.status_code == 201:
-            st.success("Ticket created")
-            st.rerun()
+        if st.button("Create Ticket"):
+            if not email or not title:
+                st.warning("Email and Title are required")
+                return
 
-       # ================= UPDATE =================
-    st.subheader("✏️ Update Ticket")
+            customer_id = next(c["id"] for c in customers if c["email"] == email)
 
-    # --- Select customer ---
-    cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
-    customers = cust_res.json()["ticket_entry"]
-    cust_map = {f"{c["name"]} ({c['email']})": c for c in customers}
+            res = requests.post(
+                f"{API_URL}/create_ticket",
+                headers=api_headers(),
+                json={
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "customer_id": customer_id
+                }
+            )
 
-    customer_email = st.selectbox(
-        "Select Customer Email",
-        [""] + list(cust_map.keys()),
-        key="upd_customer"
-    )
+            if res.status_code == 201:
+                st.success("Ticket created successfully")
+                st.rerun()
+            else:
+                st.error(res.text)
 
-    if not customer_email:
-        st.stop()
+    # =====================================================
+    # TAB 2 : UPDATE / DELETE
+    # =====================================================
+    with tab2:
+        st.subheader("✏️ Update / Delete Ticket")
 
-    customer_id = cust_map[customer_email]["id"]
+        role = st.session_state.get("role")
 
-    # --- Get tickets ---
-    ticket_res = requests.get(
-        f"{API_URL}/customer/{customer_id}/tickets",
-        headers=api_headers()
-    )
+        cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        data = cust_res.json()
 
-    tickets = ticket_res.json().get("closed_ticket", [])
-    if not tickets:
-        st.warning("No tickets found")
-        st.stop()
-
-    ticket_map = {f"{t['id']} - {t['title']}": t for t in tickets}
-
-    selected_ticket = st.selectbox(
-        "Select Ticket",
-        list(ticket_map.keys()),
-        key="upd_ticket"
-    )
-
-    t = ticket_map[selected_ticket]
-
-    # --- EDIT FIELDS (OUTSIDE BUTTON!) ---
-    title = st.text_input("Title", t["title"], key=f"upd_title{t['id']}")
-    description = st.text_input("Description", t["description"], key=f"upd_desc{t['id']}")
-    priority = st.selectbox(
-        "Priority",
-        ["High", "Medium", "Low"],
-        index=["High", "Medium", "Low"].index(t["priority"]),
-        key=f"upd_priority{t['id']}"
-    )
-    status = st.selectbox(
-        "Status",
-        ["Open", "Inprogress", "Closed"],
-        index=["Open", "Inprogress", "Closed"].index(t["status"]),
-        key=f"upd_status{t['id']}"
-    )
-
-    # --- UPDATE ---
-    if st.button("Update Ticket"):
-        res = requests.put(
-            f"{API_URL}/update_ticket/{t['id']}",
-            headers=api_headers(),
-            json={
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "status": status
-            }
-        )
-
-        if res.status_code == 200:
-            st.success("Ticket updated")
-            st.rerun()
+        if role == "staff":
+            customers = data.get("ticket_entry", [])
+        elif role == "admin":
+            customers = data.get("admin_ticket", [])
         else:
-            st.error(res.text)
+            st.error("Invalid role")
+            return
 
+        cust_map = {f"{c['name']} ({c['email']})": c for c in customers}
 
-    if st.button("Delete Ticket"):
-        res = requests.delete(
-            f"{API_URL}/delete_ticket/{t['id']}",
+        customer_key = st.selectbox("Customer", [""] + list(cust_map.keys()))
+
+        if not customer_key:
+            st.stop()
+
+        customer_id = cust_map[customer_key]["id"]
+
+        ticket_res = requests.get(
+            f"{API_URL}/customer/{customer_id}/tickets",
             headers=api_headers()
         )
-        if res.status_code == 200:
-            st.success("Ticket deleted")
-            st.rerun()
+
+        tickets = ticket_res.json().get("tickets", [])
+
+        if not tickets:
+            st.warning("No tickets found")
+            st.stop()
+
+        ticket_map = {f"{t['id']} - {t['title']}": t for t in tickets}
+        selected = st.selectbox("Select Ticket", list(ticket_map.keys()))
+
+        t = ticket_map[selected]
+
+        title = st.text_input("Title", t["title"])
+        description = st.text_area("Description", t["description"])
+        priority = st.selectbox(
+            "Priority",
+            ["High", "Medium", "Low"],
+            index=["High", "Medium", "Low"].index(t["priority"])
+        )
+
+        payload = {
+            "title": title,
+            "description": description,
+            "priority": priority
+        }
+
+        if role == "admin":
+            status = st.selectbox(
+                "Status",
+                ["Open", "Inprogress", "Closed"],
+                index=["Open", "Inprogress", "Closed"].index(t["status"])
+            )
+            payload["status"] = status
+
+        if st.button("Update Ticket"):
+            res = requests.put(
+                f"{API_URL}/update_ticket/{t['id']}",
+                headers=api_headers(),
+                json=payload
+            )
+
+            if res.status_code == 200:
+                st.success("Ticket updated")
+                st.rerun()
+            else:
+                st.error(res.text)
+
+        st.info(f"Current Status: {t['status']}")
+
+        if st.button("Delete Ticket"):
+            res = requests.delete(
+                f"{API_URL}/delete_ticket/{t['id']}",
+                headers=api_headers()
+            )
+
+            if res.status_code == 200:
+                st.success("Ticket deleted")
+                st.rerun()
+            else:
+                st.error(res.text)
+        print("Hello")
+        
+            
+    # =====================================================
+    # TAB 3 : VIEW ALL TICKETS
+    # =====================================================
+    with tab3:
+        st.subheader("📋 View Tickets")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            status = st.selectbox("Status", ["All", "Open", "Inprogress", "Closed"])
+        with col2:
+            priority = st.selectbox("Priority", ["All", "High", "Medium", "Low"])
+
+       
+        res = requests.get(
+            f"{API_URL}/tickets",
+            headers=api_headers(),
+            params={
+                "mode": "all",
+                "status": status if status != "All" else None,
+                "priority": priority if priority != "All" else None
+            }
+        )
+        if res.status_code != 200:
+            st.error("Failed to load tickets")
+            return
+
+        tickets = res.json().get("tickets", [])
+        df = to_dataframe(tickets)
+
+        if df.empty:
+            st.info("No tickets found")
+        else:
+            df = hide_columns(df, ["id", "customer_id", "assigned_to"])
+            df.index += 1
+            st.dataframe(df, use_container_width=True)
+
+    # =====================================================
+    # TAB 4 : ASSIGNED TO ME
+    # =====================================================
+    with tab4:
+        st.subheader("🧑‍💻 Tickets Assigned To Me")
+
+        res = requests.get(
+            f"{API_URL}/tickets",
+            headers=api_headers(),
+            params={"mode": "assigned"}
+        )
+
+        if res.status_code != 200:
+            st.error("Failed to load assigned tickets")
+            return
+
+        assigned = res.json().get("assigned_to_user", [])
+        df = to_dataframe(assigned)
+
+        if df.empty:
+            st.info("No tickets assigned to you")
+        else:
+            df = hide_columns(df, ["id", "customer_id", "assigned_to"])
+            df.index += 1
+            st.dataframe(df, use_container_width=True)
+    
+        
 
 
 # -----------------------
