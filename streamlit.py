@@ -51,7 +51,7 @@ def api_headers():
     }
 
 def login(email, password):
-    res = requests.post(f"{API_URL}/login", json={
+    res = requests.post(f"{API_URL}/auth/login", json={
         "email": email,
         "password": password
     })
@@ -95,7 +95,7 @@ def general_dashboard(stats):
     
 
 def dashboard_page():
-    res = requests.get(f"{API_URL}/dashboard", headers=api_headers())
+    res = requests.get(f"{API_URL}/dashboard/dashboard", headers=api_headers())
 
     if res.status_code != 200:
         st.error("Failed to load dashboard")
@@ -148,7 +148,7 @@ def admin_dashboard(stats):
     with tab2:
         st.subheader("Recent Activity")
 
-        res = requests.get(f"{API_URL}/activity_logs", headers=api_headers())
+        res = requests.get(f"{API_URL}/logs/activity_logs", headers=api_headers())
         if res.status_code == 200:
             logs = res.json()["logs"]
             df = to_dataframe(logs)
@@ -169,7 +169,7 @@ def admin_dashboard(stats):
     with tab3:
         st.subheader("Assigning Tickets")
         
-        res=requests.get(f"{API_URL}/dashboard",headers=api_headers(),params={"assigned":"false"})
+        res=requests.get(f"{API_URL}/dashboard/dashboard",headers=api_headers(),params={"assigned":"false"})
         unassigned=res.json()["unassigned_ticket"]
         ticket_map = {f'{u["id"]} ({u["title"]})': u for u in unassigned}
         selected = st.selectbox("Select Ticket", [""] + list(ticket_map.keys()))
@@ -179,12 +179,12 @@ def admin_dashboard(stats):
         ticket=ticket_map[selected]
         user_ticket_count = res.json().get("user_ticket_count", [])
         count_map = {u["user_id"]: u["ticket_count"] for u in user_ticket_count}
-        sta=requests.get(f"{API_URL}/get_user",headers=api_headers())
+        sta=requests.get(f"{API_URL}/auth/get_user",headers=api_headers())
         staff=sta.json()["users"]
         staff_map = {
-    f'{s["email"]} ({count_map.get(s["id"], 0)} tickets)': s
-    for s in staff
-}
+        f'{s["email"]} ({count_map.get(s["id"], 0)} tickets)': s
+        for s in staff
+            }
         staff_select=st.selectbox("Select Staff",[""]+ list(staff_map.keys()))
         if not staff_select:
             st.warning("Please select an Staff for assign ticket")
@@ -193,58 +193,18 @@ def admin_dashboard(stats):
 
         if st.button("Assign Ticket"):
             res = requests.put(
-            f"{API_URL}/tickets/{ticket['id']}/assign",
+            f"{API_URL}/ticket/tickets/{ticket['id']}/assign",
             headers=api_headers(),
             json={"agent_id": agent_id}
-    )
+            )
             if res.status_code == 200:
                 st.success("Ticket assigned successfully")
                 st.rerun()
 
     with tab4:
-        st.subheader("🔍 Search")
-
-        query = st.text_input(
-            "Search customers or tickets",
-            placeholder="Name, email, ticket title..."
-        )
-
-        if query:
-            res = requests.get(
-                f"{API_URL}/search",
-                headers=api_headers(),
-                params={"q": query}
-            )
-
-            if res.status_code == 200:
-                data = res.json()
-
-                customers = data.get("customers", [])
-                tickets = data.get("tickets", [])
-
-                if customers:
-                    st.markdown("### 👥 Customers")
-                    df_customers = to_dataframe(customers)
-                    df_customers = hide_columns(df_customers, ["id"])
-                    df_customers.index += 1
-                    st.dataframe(df_customers, use_container_width=True)
-                else:
-                    st.info("No customers found")
-
+        search_page()
         
-                if tickets:
-                    st.markdown("### 🎟️ Tickets")
-                    df_tickets = to_dataframe(tickets)
-                    df_tickets = hide_columns(
-                        df_tickets, ["id", "customer_id"]
-                    )
-                    df_tickets.index += 1
-                    st.dataframe(df_tickets, use_container_width=True)
-                else:
-                    st.info("No tickets found")
 
-            else:
-                st.error("Search failed")
 
 
 
@@ -285,7 +245,7 @@ def customers_page():
 
             if st.button("Create Customer", use_container_width=True):
                 res = requests.post(
-                    f"{API_URL}/create_customer",
+                    f"{API_URL}/customer/create_customer",
                     headers=api_headers(),
                     json={
                         "name": c_name,
@@ -302,7 +262,7 @@ def customers_page():
     with tab2:
         st.subheader("Update or Delete Customer")
 
-        res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
         customers = res.json()["customers"]
 
         cust_map = {f'{c["name"]} ({c["email"]})': c for c in customers}
@@ -321,7 +281,7 @@ def customers_page():
             with col1:
                 if st.button("Update", use_container_width=True):
                     res = requests.put(
-                        f"{API_URL}/update_customer/{c['id']}",
+                        f"{API_URL}/customer/update_customer/{c['id']}",
                         headers=api_headers(),
                         json={
                             "name": name,
@@ -337,7 +297,7 @@ def customers_page():
                 if st.button("Delete", use_container_width=True):
                     st.warning("Customer deleted")
                     requests.delete(
-                        f"{API_URL}/delete_customer/{c['id']}",
+                        f"{API_URL}/customer/delete_customer/{c['id']}",
                         headers=api_headers()
                     )
                     st.rerun()
@@ -346,7 +306,7 @@ def customers_page():
     with tab3:
         st.subheader("All Customers")
 
-        res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
         customers = res.json()["customers"]
 
         df = to_dataframe(customers)
@@ -372,7 +332,7 @@ def tickets_page():
     with tab1:
         st.subheader("➕ Create Ticket")
 
-        cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        cust_res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
         customers = cust_res.json().get("customers", [])
 
         if not customers:
@@ -394,7 +354,7 @@ def tickets_page():
             customer_id = next(c["id"] for c in customers if c["email"] == email)
 
             res = requests.post(
-                f"{API_URL}/create_ticket",
+                f"{API_URL}/ticket/create_ticket",
                 headers=api_headers(),
                 json={
                     "title": title,
@@ -418,11 +378,12 @@ def tickets_page():
 
         role = st.session_state.get("role")
 
-        cust_res = requests.get(f"{API_URL}/get_customer", headers=api_headers())
+        cust_res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
         data = cust_res.json()
 
         if role == "staff":
             customers = data.get("ticket_entry", [])
+            
         elif role == "admin":
             customers = data.get("admin_ticket", [])
         else:
@@ -439,7 +400,7 @@ def tickets_page():
         customer_id = cust_map[customer_key]["id"]
 
         ticket_res = requests.get(
-            f"{API_URL}/customer/{customer_id}/tickets",
+            f"{API_URL}/customer/customer/{customer_id}/tickets",
             headers=api_headers()
         )
 
@@ -482,7 +443,7 @@ def tickets_page():
         if st.button("Close Ticket", key=f"close_{t['id']}"):
             close_payload = {"status": "Closed"}
             res = requests.put(
-                f"{API_URL}/update_ticket/{t['id']}",
+                f"{API_URL}/ticket/update_ticket/{t['id']}",
                 headers=api_headers(),
                 json=close_payload
             )
@@ -495,7 +456,7 @@ def tickets_page():
         # Update ticket button (updates other fields + status if admin)
         if st.button("Update Ticket",key=f"update_{t['id']}"):
             res = requests.put(
-                f"{API_URL}/update_ticket/{t['id']}",
+                f"{API_URL}/ticket/update_ticket/{t['id']}",
                 headers=api_headers(),
                 json=payload
             )
@@ -509,7 +470,7 @@ def tickets_page():
 
         if st.button("Delete Ticket",key=f"delete_{t['id']}"):
             res = requests.delete(
-                f"{API_URL}/delete_ticket/{t['id']}",
+                f"{API_URL}/ticket/delete_ticket/{t['id']}",
                 headers=api_headers()
             )
 
@@ -535,7 +496,7 @@ def tickets_page():
 
        
         res = requests.get(
-            f"{API_URL}/tickets",
+            f"{API_URL}/ticket/tickets",
             headers=api_headers(),
             params={
                 "mode": "all",
@@ -557,14 +518,12 @@ def tickets_page():
             df.index += 1
             st.dataframe(df, use_container_width=True)
 
-        
-       
 
     with tab4:
         st.subheader("🧑‍💻 Tickets Assigned To Me")
 
         res = requests.get(
-            f"{API_URL}/tickets",
+            f"{API_URL}/ticket/tickets",
             headers=api_headers(),
             params={"mode": "assigned"}
         )
@@ -599,7 +558,7 @@ def users_page():
 
     if st.button("Create User"):
         res = requests.post(
-            f"{API_URL}/users",
+            f"{API_URL}/auth/users",
             headers=api_headers(),
             json={"email": email, "password": password, "role": role}
         )
@@ -613,7 +572,7 @@ def users_page():
     with col1:
         if st.button("Delete User"):
             requests.delete(
-            f"{API_URL}/delete_user/{tid}",
+            f"{API_URL}/auth/delete_user/{tid}",
             headers=api_headers(),
             )
 
@@ -623,7 +582,7 @@ def users_page():
     with col2:
         if st.button("View Users"):
             res = requests.get(
-                f"{API_URL}/get_user",
+                f"{API_URL}/auth/get_user",
                 headers=api_headers()
             )
 
@@ -637,7 +596,135 @@ def users_page():
             else:
                 st.error("Failed to fetch users")
 
-    
+def search_page():
+    st.subheader("🔍 Search")
+
+    query = st.text_input(
+        "Search customers or tickets",
+        placeholder="Name, email, ticket title..."
+    )
+
+    if not query:
+        return
+
+    res = requests.get(
+        f"{API_URL}/search/search",
+        headers=api_headers(),
+        params={"q": query}
+    )
+
+    if res.status_code != 200:
+        st.error("Search failed")
+        return
+
+    data = res.json()
+    customers = data.get("customers", [])
+    tickets = data.get("tickets", [])
+
+    # ===================== CUSTOMERS =====================
+    st.markdown("## 👥 Customers")
+
+    if not customers:
+        st.info("No customers found")
+    else:
+        df_customers = to_dataframe(customers)
+        df_customers = hide_columns(df_customers, ["id"])
+        df_customers.index += 1
+        st.dataframe(df_customers, use_container_width=True)
+
+        customer_map = {
+            f"{c['name']} ({c['email']})": c["id"]
+            for c in customers
+        }
+
+        selected_customer = st.selectbox(
+            "Select customer to view details",
+            [""] + list(customer_map.keys()),
+            key="customer_select"
+        )
+
+        if selected_customer:
+            customer_id = customer_map[selected_customer]
+
+            detail_res = requests.get(
+                f"{API_URL}/customer/customers/{customer_id}",
+                headers=api_headers()
+            )
+
+            if detail_res.status_code == 200:
+                detail = detail_res.json()
+
+                customer = detail["customer"]
+                tickets = detail["tickets"]
+                ticket_count = detail["ticket_count"]
+
+                st.markdown("---")
+                st.markdown("## 🧾 Customer Overview")
+
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    st.markdown(f"""
+                    <div style="
+                        background:#E6E6FA;
+                        padding:20px;
+                        border-radius:16px;
+                        color:black;
+                    ">
+                        <h3 style="margin-bottom:8px;">👤 {customer['name']}</h3>
+                        <p>📧 {customer['email']}</p>
+                        <p>🏢 {customer.get('company', '—')}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with col2:
+                    st.markdown(f"""
+                    <div style="
+                        background:#E6E6FA;
+                        padding:20px;
+                        border-radius:16px;
+                        text-align:center;
+                        color:black;
+                    ">
+                        <h1 style="margin:0;">{ticket_count}</h1>
+                        <p>Total Tickets</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ===================== TICKETS =====================
+    st.markdown("## 🎟️ Tickets")
+
+    if not tickets:
+        st.info("No tickets found")
+    else:
+        df_tickets = to_dataframe(tickets)
+        df_tickets = hide_columns(df_tickets, ["id", "customer_id"])
+        df_tickets.index += 1
+        st.dataframe(df_tickets, use_container_width=True)
+
+        ticket_map = {
+            f"#{t['id']} - {t['title']}": t["id"]
+            for t in tickets
+        }
+
+        selected_ticket = st.selectbox(
+            "Select ticket to view details",
+            [""] + list(ticket_map.keys()),
+            key="ticket_select"
+        )
+
+        if selected_ticket:
+            ticket_id = ticket_map[selected_ticket]
+
+            ticket_res = requests.get(
+                f"{API_URL}/ticket/tickets/{ticket_id}",
+                headers=api_headers()
+            )
+
+            if ticket_res.status_code == 200:
+                st.markdown("### 🎫 Ticket Details")
+                st.json(ticket_res.json())
+
 
 
 
@@ -649,7 +736,7 @@ else:
     st.sidebar.divider()
 
 
-    menu = ["Dashboard", "Customers", "Tickets"]
+    menu = ["Dashboard", "Customers", "Tickets","Search"]
     if st.session_state["role"] == "admin":
         menu.append("Users")
     menu.append("Logout")
@@ -664,6 +751,8 @@ else:
         tickets_page()
     elif choice == "Users":
         users_page()
+    elif choice == "Search":
+        search_page()
     elif choice == "Logout":
         st.session_state.clear()
         st.rerun()
