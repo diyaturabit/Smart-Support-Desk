@@ -124,7 +124,7 @@ def admin_dashboard(stats):
     st.divider()
 
     # ---- TABS ----
-    tab1, tab2,tab3 = st.tabs(["📈 Customer Summary", "🧾 Activity Logs","Assigning Tickets"])
+    tab1, tab2,tab3,tab4 = st.tabs(["📈 Customer Summary", "🧾 Activity Logs","Assigning Tickets","Search"])
 
     # ---- CUSTOMER SUMMARY ----
     with tab1:
@@ -165,6 +165,7 @@ def admin_dashboard(stats):
             st.dataframe(df, use_container_width=True, height=350)
         else:
             st.error("Failed to load logs")
+
     with tab3:
         st.subheader("Assigning Tickets")
         
@@ -176,10 +177,14 @@ def admin_dashboard(stats):
             st.warning("Please select a ticket")
             return 
         ticket=ticket_map[selected]
-
+        user_ticket_count = res.json().get("user_ticket_count", [])
+        count_map = {u["user_id"]: u["ticket_count"] for u in user_ticket_count}
         sta=requests.get(f"{API_URL}/get_user",headers=api_headers())
         staff=sta.json()["users"]
-        staff_map={f'{s["id"]} ({s["email"]})':s for s in staff }
+        staff_map = {
+    f'{s["email"]} ({count_map.get(s["id"], 0)} tickets)': s
+    for s in staff
+}
         staff_select=st.selectbox("Select Staff",[""]+ list(staff_map.keys()))
         if not staff_select:
             st.warning("Please select an Staff for assign ticket")
@@ -195,6 +200,52 @@ def admin_dashboard(stats):
             if res.status_code == 200:
                 st.success("Ticket assigned successfully")
                 st.rerun()
+
+    with tab4:
+        st.subheader("🔍 Search")
+
+        query = st.text_input(
+            "Search customers or tickets",
+            placeholder="Name, email, ticket title..."
+        )
+
+        if query:
+            res = requests.get(
+                f"{API_URL}/search",
+                headers=api_headers(),
+                params={"q": query}
+            )
+
+            if res.status_code == 200:
+                data = res.json()
+
+                customers = data.get("customers", [])
+                tickets = data.get("tickets", [])
+
+                if customers:
+                    st.markdown("### 👥 Customers")
+                    df_customers = to_dataframe(customers)
+                    df_customers = hide_columns(df_customers, ["id"])
+                    df_customers.index += 1
+                    st.dataframe(df_customers, use_container_width=True)
+                else:
+                    st.info("No customers found")
+
+        
+                if tickets:
+                    st.markdown("### 🎟️ Tickets")
+                    df_tickets = to_dataframe(tickets)
+                    df_tickets = hide_columns(
+                        df_tickets, ["id", "customer_id"]
+                    )
+                    df_tickets.index += 1
+                    st.dataframe(df_tickets, use_container_width=True)
+                else:
+                    st.info("No tickets found")
+
+            else:
+                st.error("Search failed")
+
 
 
 
@@ -424,23 +475,39 @@ def tickets_page():
                 index=["Open", "Inprogress", "Closed"].index(t["status"])
             )
             payload["status"] = status
+            
+       
+    
+       # Close ticket button (staff/admin)
+        if st.button("Close Ticket", key=f"close_{t['id']}"):
+            close_payload = {"status": "Closed"}
+            res = requests.put(
+                f"{API_URL}/update_ticket/{t['id']}",
+                headers=api_headers(),
+                json=close_payload
+            )
+            if res.status_code == 200:
+                st.success("Ticket closed successfully")
+                st.rerun()
+            else:
+                st.error(res.json().get("error", res.text))
 
-        if st.button("Update Ticket"):
+        # Update ticket button (updates other fields + status if admin)
+        if st.button("Update Ticket",key=f"update_{t['id']}"):
             res = requests.put(
                 f"{API_URL}/update_ticket/{t['id']}",
                 headers=api_headers(),
                 json=payload
             )
-
             if res.status_code == 200:
                 st.success("Ticket updated")
                 st.rerun()
             else:
-                st.error(res.text)
+                st.error(res.json().get("error", res.text))
 
         st.info(f"Current Status: {t['status']}")
 
-        if st.button("Delete Ticket"):
+        if st.button("Delete Ticket",key=f"delete_{t['id']}"):
             res = requests.delete(
                 f"{API_URL}/delete_ticket/{t['id']}",
                 headers=api_headers()
@@ -490,9 +557,9 @@ def tickets_page():
             df.index += 1
             st.dataframe(df, use_container_width=True)
 
-    # =====================================================
-    # TAB 4 : ASSIGNED TO ME
-    # =====================================================
+        
+       
+
     with tab4:
         st.subheader("🧑‍💻 Tickets Assigned To Me")
 
@@ -515,6 +582,7 @@ def tickets_page():
             df = hide_columns(df, ["id", "customer_id", "assigned_to"])
             df.index += 1
             st.dataframe(df, use_container_width=True)
+
     
         
 
@@ -572,9 +640,7 @@ def users_page():
     
 
 
-# -----------------------
-# MAIN
-# -----------------------
+
 if "token" not in st.session_state:
     login_page()
 else:

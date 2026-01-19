@@ -12,6 +12,7 @@ from decorators import jwt_required,admin_required
 from Redis.connection import get_cache,set_cache,delete_cache
 from datetime import datetime
 from logs.activity_logger import log_activity
+# from flask_jwt_extended import jwt_required, get_jwt_identity
 
 app = Flask(__name__)
 
@@ -249,8 +250,7 @@ def update_ticket(ticket_id):
 
         rows = execute_query(sql, values, commit=True)
 
-        if rows == 0:
-            return jsonify({"error": "Ticket not found"}), 404
+
 
         return jsonify({"message": "Ticket updated successfully"}), 200
 
@@ -279,7 +279,7 @@ def list_tickets():
             params.append(priority)
 
         tickets = execute_query(sql, tuple(params), fetchall=True)
-        # -------- ASSIGNED TO LOGGED-IN USER --------
+      
         assigned_sql = """
         SELECT 
             t.id,
@@ -366,6 +366,32 @@ def customer_tickets(customer_id):
     except Exception as e:
         return handle_exception(e)
 
+
+# # Backend
+# @app.route("/tickets/<int:ticket_id>/close", methods=["PUT"])
+# @jwt_required
+# def close_ticket(ticket_id):
+#     try:
+#         # No need to read JSON if you just use g.user
+#         user = g.user
+
+#         if not user or user["role"] != "staff":
+#             return jsonify({"error": "Only staff can close tickets"}), 403
+
+#         sql = "UPDATE ticket SET status = 'Closed' WHERE id = %s AND assigned_to = %s"
+#         rows = execute_query(sql, (ticket_id, user["id"]), commit=True)
+
+#         if rows == 0:
+#             return jsonify({"error": "Ticket not found or not assigned to you"}), 404
+
+#         return jsonify({"message": "Ticket closed successfully"}), 200
+
+
+
+#     except Exception as e:
+#         return handle_exception(e)
+
+
 @app.route("/dashboard", methods=["GET"])
 @jwt_required
 def dashboard():
@@ -403,6 +429,18 @@ def dashboard():
         ORDER BY c.id DESC
         LIMIT 50
         """
+        user_ticket_count_query = """
+            SELECT 
+                u.id AS user_id,
+                u.email,
+                COUNT(t.id) AS ticket_count
+            FROM users u
+            LEFT JOIN ticket t 
+                ON t.assigned_to = u.id AND t.status != 'Closed'
+            GROUP BY u.id, u.email
+            """
+
+        user_ticket_count = execute_query(user_ticket_count_query, fetchall=True)
 
         customer_ticket = execute_query(customer_ticket_query,fetchall=True)
         unassigned_ticket_query="SELECT id,title from ticket WHERE status='Open' AND assigned_to is NULL"
@@ -416,7 +454,8 @@ def dashboard():
             "low": stats["low_tickets"],
             "customer_ticket": customer_ticket,
             "unassigned_ticket":unassigned_ticket,
-            "assigned_count":stats["assigned_count"]
+            "assigned_count":stats["assigned_count"],
+            "user_ticket_count":user_ticket_count
         }
 
         # --- Cache for 2 minutes ---
@@ -426,6 +465,54 @@ def dashboard():
 
     except Exception as e:
         return handle_exception(e)
+
+@app.route("/search", methods=["GET"])
+@jwt_required
+def search():
+    try:
+        query = request.args.get("q", "").strip()
+
+        if not query:
+            return jsonify({"error": "Search query is required"}), 400
+
+        like_query = f"%{query}%"
+
+        customer_sql = """
+            SELECT id, name, email, company
+            FROM customer
+            WHERE name LIKE %s OR email LIKE %s
+            LIMIT 10
+        """
+        customers = execute_query(
+            customer_sql,
+            (like_query, like_query),fetchall=True
+        )
+
+        ticket_sql = """
+            SELECT 
+                t.id,
+                t.title,
+                t.status,
+                t.priority,
+                c.name AS customer_name
+            FROM ticket t
+            JOIN customer c ON t.customer_id = c.id
+            WHERE t.title LIKE %s OR t.description LIKE %s
+            LIMIT 10
+        """
+        tickets = execute_query(
+            ticket_sql,
+            (like_query, like_query),fetchall=True
+        )
+
+        return jsonify({
+            "customers": customers,
+            "tickets": tickets
+        }), 200
+    except Exception as e:
+        return handle_exception(e)
+
+
 
 @app.route("/dashboard/admin",methods=["GET"])
 def admin_dashboard():
