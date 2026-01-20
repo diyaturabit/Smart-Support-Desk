@@ -167,39 +167,66 @@ def admin_dashboard(stats):
             st.error("Failed to load logs")
 
     with tab3:
-        st.subheader("Assigning Tickets")
-        
-        res=requests.get(f"{API_URL}/dashboard/dashboard",headers=api_headers(),params={"assigned":"false"})
-        unassigned=res.json()["unassigned_ticket"]
-        ticket_map = {f'{u["id"]} ({u["title"]})': u for u in unassigned}
-        selected = st.selectbox("Select Ticket", [""] + list(ticket_map.keys()))
-        if not selected:
-            st.warning("Please select a ticket")
-            return 
-        ticket=ticket_map[selected]
-        user_ticket_count = res.json().get("user_ticket_count", [])
-        count_map = {u["user_id"]: u["ticket_count"] for u in user_ticket_count}
-        sta=requests.get(f"{API_URL}/auth/get_user",headers=api_headers())
-        staff=sta.json()["users"]
-        staff_map = {
-        f'{s["email"]} ({count_map.get(s["id"], 0)} tickets)': s
-        for s in staff
-            }
-        staff_select=st.selectbox("Select Staff",[""]+ list(staff_map.keys()))
-        if not staff_select:
-            st.warning("Please select an Staff for assign ticket")
-            return
-        agent_id=staff_map[staff_select]["id"]
+        st.subheader("🎯 Assigning Tickets")
 
-        if st.button("Assign Ticket"):
-            res = requests.put(
-            f"{API_URL}/ticket/tickets/{ticket['id']}/assign",
+        res = requests.get(
+            f"{API_URL}/dashboard/dashboard",
             headers=api_headers(),
-            json={"agent_id": agent_id}
+            params={"assigned": "false"}
+        )
+
+        unassigned = res.json().get("unassigned_ticket", [])
+        user_ticket_count = res.json().get("user_ticket_count", [])
+
+        ticket_map = {f'{u["id"]} - {u["title"]}': u for u in unassigned}
+
+        selected_ticket_key = st.selectbox(
+            "🎟️ Select Ticket",
+            [""] + list(ticket_map.keys()),
+            key="assign_ticket_select"
+        )
+
+        ticket = ticket_map.get(selected_ticket_key)
+
+
+        count_map = {u["user_id"]: u["ticket_count"] for u in user_ticket_count}
+
+        sta = requests.get(f"{API_URL}/auth/get_user", headers=api_headers())
+        staff = sta.json().get("users", [])
+
+        staff_map = {
+            f'{s["email"]} ({count_map.get(s["id"], 0)} tickets)': s
+            for s in staff
+        }
+
+        selected_staff_key = st.selectbox(
+            "👤 Select Staff",
+            [""] + list(staff_map.keys()),
+            key="assign_staff_select"
+        )
+
+        agent = staff_map.get(selected_staff_key)
+
+        assign_disabled = not ticket or not agent
+
+        if st.button("✅ Assign Ticket", disabled=assign_disabled):
+            res = requests.put(
+                f"{API_URL}/ticket/tickets/{ticket['id']}/assign",
+                headers=api_headers(),
+                json={"agent_id": agent["id"]}
             )
+
             if res.status_code == 200:
-                st.success("Ticket assigned successfully")
+                st.success("Ticket assigned successfully 🎉")
                 st.rerun()
+            else:
+                st.error(res.text)
+
+        if not ticket:
+            st.info("Select a ticket to continue")
+
+        if not agent:
+            st.info("Select a staff member to assign the ticket")
 
     with tab4:
         search_page()
@@ -225,9 +252,7 @@ def staff_dashboard(stats):
     st.success("Focus on resolving open and high-priority tickets")
 
 
-# -----------------------
-# Customers
-# -----------------------
+
 def customers_page():
     st.title("👥 Customers")
 
@@ -258,7 +283,7 @@ def customers_page():
                     st.success("Customer created")
                     st.rerun()
 
-    # -------- UPDATE / DELETE --------
+
     with tab2:
         st.subheader("Update or Delete Customer")
 
@@ -326,9 +351,7 @@ def tickets_page():
         "🧑‍💻 Assigned To Me"
     ])
 
-    # =====================================================
-    # TAB 1 : CREATE TICKET
-    # =====================================================
+
     with tab1:
         st.subheader("➕ Create Ticket")
 
@@ -370,121 +393,106 @@ def tickets_page():
             else:
                 st.error(res.text)
 
-    # =====================================================
-    # TAB 2 : UPDATE / DELETE
-    # =====================================================
-    with tab2:
-        st.subheader("✏️ Update / Delete Ticket")
-
-        role = st.session_state.get("role")
-
-        cust_res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
-        data = cust_res.json()
-
-        if role == "staff":
-            customers = data.get("ticket_entry", [])
-            
-        elif role == "admin":
-            customers = data.get("admin_ticket", [])
-        else:
-            st.error("Invalid role")
-            return
-
-        cust_map = {f"{c['name']} ({c['email']})": c for c in customers}
-
-        customer_key = st.selectbox("Customer", [""] + list(cust_map.keys()))
-
-        if not customer_key:
-            st.stop()
-
-        customer_id = cust_map[customer_key]["id"]
-
-        ticket_res = requests.get(
-            f"{API_URL}/customer/customer/{customer_id}/tickets",
-            headers=api_headers()
-        )
-
-        tickets = ticket_res.json().get("tickets", [])
-
-        if not tickets:
-            st.warning("No tickets found")
-            st.stop()
-
-        ticket_map = {f"{t['id']} - {t['title']}": t for t in tickets}
-        selected = st.selectbox("Select Ticket", list(ticket_map.keys()))
-
-        t = ticket_map[selected]
-
-        title = st.text_input("Title", t["title"])
-        description = st.text_area("Description", t["description"])
-        priority = st.selectbox(
-            "Priority",
-            ["High", "Medium", "Low"],
-            index=["High", "Medium", "Low"].index(t["priority"])
-        )
-
-        payload = {
-            "title": title,
-            "description": description,
-            "priority": priority
-        }
-
-        if role == "admin":
-            status = st.selectbox(
-                "Status",
-                ["Open", "Inprogress", "Closed"],
-                index=["Open", "Inprogress", "Closed"].index(t["status"])
-            )
-            payload["status"] = status
-            
-       
     
-       # Close ticket button (staff/admin)
-        if st.button("Close Ticket", key=f"close_{t['id']}"):
-            close_payload = {"status": "Closed"}
-            res = requests.put(
-                f"{API_URL}/ticket/update_ticket/{t['id']}",
-                headers=api_headers(),
-                json=close_payload
-            )
-            if res.status_code == 200:
-                st.success("Ticket closed successfully")
-                st.rerun()
-            else:
-                st.error(res.json().get("error", res.text))
+    with tab2:
+       st.subheader("✏️ Update / Delete Ticket")
 
-        # Update ticket button (updates other fields + status if admin)
-        if st.button("Update Ticket",key=f"update_{t['id']}"):
-            res = requests.put(
-                f"{API_URL}/ticket/update_ticket/{t['id']}",
-                headers=api_headers(),
-                json=payload
-            )
-            if res.status_code == 200:
-                st.success("Ticket updated")
-                st.rerun()
-            else:
-                st.error(res.json().get("error", res.text))
+       role = st.session_state.get("role")
 
-        st.info(f"Current Status: {t['status']}")
+       cust_res = requests.get(f"{API_URL}/customer/get_customer", headers=api_headers())
+       data = cust_res.json()
 
-        if st.button("Delete Ticket",key=f"delete_{t['id']}"):
-            res = requests.delete(
-                f"{API_URL}/ticket/delete_ticket/{t['id']}",
-                headers=api_headers()
-            )
+       if role == "staff":
+           customers = data.get("ticket_entry", [])
+       elif role == "admin":
+           customers = data.get("admin_ticket", [])
+       else:
+           st.error("Invalid role")
+           customers = []
 
-            if res.status_code == 200:
-                st.success("Ticket deleted")
-                st.rerun()
-            else:
-                st.error(res.text)
-        print("Hello")
-        
-            
-    # =====================================================
-    # TAB 3 : VIEW ALL TICKETS
-    # =====================================================
+       cust_map = {f"{c['name']} ({c['email']})": c for c in customers}
+       customer_key = st.selectbox("Customer", [""] + list(cust_map.keys()))
+
+       if customer_key:
+           customer_id = cust_map[customer_key]["id"]
+
+           ticket_res = requests.get(
+               f"{API_URL}/customer/customer/{customer_id}/tickets",
+               headers=api_headers()
+           )
+
+           tickets = ticket_res.json().get("tickets", [])
+
+           if tickets:
+               ticket_map = {f"{t['id']} - {t['title']}": t for t in tickets}
+               selected = st.selectbox("Select Ticket", list(ticket_map.keys()))
+
+               t = ticket_map[selected]
+
+               title = st.text_input("Title", t["title"])
+               description = st.text_area("Description", t["description"])
+               priority = st.selectbox(
+                   "Priority",
+                   ["High", "Medium", "Low"],
+                   index=["High", "Medium", "Low"].index(t["priority"])
+               )
+
+               payload = {
+                   "title": title,
+                   "description": description,
+                   "priority": priority
+               }
+
+               if role == "admin":
+                   status = st.selectbox(
+                       "Status",
+                       ["Open", "Inprogress", "Closed"],
+                       index=["Open", "Inprogress", "Closed"].index(t["status"])
+                   )
+                   payload["status"] = status
+
+               col1, col2, col3 = st.columns(3)
+
+               with col1:
+                   if st.button("Update Ticket", key=f"update_{t['id']}"):
+                       res = requests.put(
+                           f"{API_URL}/ticket/update_ticket/{t['id']}",
+                           headers=api_headers(),
+                           json=payload
+                       )
+                       if res.status_code == 200:
+                           st.success("Ticket updated")
+                           st.rerun()
+
+               with col2:
+                   if st.button("Close Ticket", key=f"close_{t['id']}"):
+                       res = requests.put(
+                           f"{API_URL}/ticket/update_ticket/{t['id']}",
+                           headers=api_headers(),
+                           json={"status": "Closed"}
+                       )
+                       if res.status_code == 200:
+                           st.success("Ticket closed")
+                           st.rerun()
+
+               with col3:
+                   if st.button("Delete Ticket", key=f"delete_{t['id']}"):
+                       res = requests.delete(
+                           f"{API_URL}/ticket/delete_ticket/{t['id']}",
+                           headers=api_headers()
+                       )
+                       if res.status_code == 200:
+                           st.success("Ticket deleted")
+                           st.rerun()
+
+               st.info(f"Current Status: {t['status']}")
+
+           else:
+               st.warning("No tickets found")
+       else:
+           st.info("Please select a customer to continue")
+
+
     with tab3:
         st.subheader("📋 View Tickets")
         
@@ -544,11 +552,6 @@ def tickets_page():
 
     
         
-
-
-# -----------------------
-# Users (Admin only)
-# -----------------------
 def users_page():
     st.header("👤 User Management")
 
@@ -595,7 +598,6 @@ def users_page():
                 st.dataframe(df,use_container_width=True)
             else:
                 st.error("Failed to fetch users")
-
 def search_page():
     st.subheader("🔍 Search")
 
@@ -605,6 +607,7 @@ def search_page():
     )
 
     if not query:
+        st.info("Start typing to search customers or tickets")
         return
 
     res = requests.get(
@@ -621,110 +624,107 @@ def search_page():
     customers = data.get("customers", [])
     tickets = data.get("tickets", [])
 
-    # ===================== CUSTOMERS =====================
+    # ==================== CUSTOMERS ====================
     st.markdown("## 👥 Customers")
+
+    selected_customer = None
 
     if not customers:
         st.info("No customers found")
+
+    elif len(customers) == 1:
+        # Auto select single customer
+        selected_customer = customers[0]
+
     else:
-        df_customers = to_dataframe(customers)
-        df_customers = hide_columns(df_customers, ["id"])
-        df_customers.index += 1
-        st.dataframe(df_customers, use_container_width=True)
-
-        customer_map = {
-            f"{c['name']} ({c['email']})": c["id"]
-            for c in customers
-        }
-
-        selected_customer = st.selectbox(
-            "Select customer to view details",
-            [""] + list(customer_map.keys()),
-            key="customer_select"
+        # Let user choose only if multiple
+        selected_customer = st.radio(
+            "Select a customer",
+            customers,
+            format_func=lambda c: f"{c['name']} ({c['email']})"
         )
 
-        if selected_customer:
-            customer_id = customer_map[selected_customer]
+    # -------------------- CUSTOMER DETAILS --------------------
+    if selected_customer:
+        customer_id = selected_customer["id"]
 
-            detail_res = requests.get(
-                f"{API_URL}/customer/customers/{customer_id}",
-                headers=api_headers()
-            )
+        detail_res = requests.get(
+            f"{API_URL}/customer/customers/{customer_id}",
+            headers=api_headers()
+        )
 
-            if detail_res.status_code == 200:
-                detail = detail_res.json()
+        if detail_res.status_code == 200:
+            detail = detail_res.json()
 
-                customer = detail["customer"]
-                tickets = detail["tickets"]
-                ticket_count = detail["ticket_count"]
+            customer = detail["customer"]
+            tickets = detail["tickets"]
+            ticket_count = detail["ticket_count"]
 
-                st.markdown("---")
-                st.markdown("## 🧾 Customer Overview")
+            st.markdown("---")
+            st.markdown("## 🧾 Customer Overview")
 
-                col1, col2 = st.columns([3, 1])
+            col1, col2 = st.columns([3, 1])
 
-                with col1:
-                    st.markdown(f"""
-                    <div style="
-                        background:#E6E6FA;
-                        padding:20px;
-                        border-radius:16px;
-                        color:black;
-                    ">
-                        <h3 style="margin-bottom:8px;">👤 {customer['name']}</h3>
-                        <p>📧 {customer['email']}</p>
-                        <p>🏢 {customer.get('company', '—')}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+            with col1:
+                st.markdown(f"""
+                <div style="
+                    background:#E6E6FA;
+                    padding:20px;
+                    border-radius:16px;
+                    color:black;
+                ">
+                    <h3 style="margin-bottom:8px;">👤 {customer['name']}</h3>
+                    <p>📧 {customer['email']}</p>
+                    <p>🏢 {customer.get('company', '—')}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-                with col2:
-                    st.markdown(f"""
-                    <div style="
-                        background:#E6E6FA;
-                        padding:20px;
-                        border-radius:16px;
-                        text-align:center;
-                        color:black;
-                    ">
-                        <h1 style="margin:0;">{ticket_count}</h1>
-                        <p>Total Tickets</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                <div style="
+                    background:#E6E6FA;
+                    padding:20px;
+                    border-radius:16px;
+                    text-align:center;
+                    color:black;
+                ">
+                    <h1 style="margin:0;">{ticket_count}</h1>
+                    <p>Total Tickets</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-    # ===================== TICKETS =====================
+    # ==================== TICKETS ====================
     st.markdown("## 🎟️ Tickets")
 
     if not tickets:
         st.info("No tickets found")
-    else:
-        df_tickets = to_dataframe(tickets)
-        df_tickets = hide_columns(df_tickets, ["id", "customer_id"])
-        df_tickets.index += 1
-        st.dataframe(df_tickets, use_container_width=True)
+        return
 
-        ticket_map = {
-            f"#{t['id']} - {t['title']}": t["id"]
-            for t in tickets
-        }
+    # Ticket table
+    df_tickets = to_dataframe(tickets)
+    df_tickets = hide_columns(df_tickets, ["id", "customer_id"])
+    df_tickets.index += 1
+    st.dataframe(df_tickets, use_container_width=True)
 
-        selected_ticket = st.selectbox(
-            "Select ticket to view details",
-            [""] + list(ticket_map.keys()),
-            key="ticket_select"
-        )
 
-        if selected_ticket:
-            ticket_id = ticket_map[selected_ticket]
+    st.markdown("### 🔍 Ticket Details")
 
-            ticket_res = requests.get(
-                f"{API_URL}/ticket/tickets/{ticket_id}",
-                headers=api_headers()
-            )
-
-            if ticket_res.status_code == 200:
-                st.markdown("### 🎫 Ticket Details")
-                st.json(ticket_res.json())
-
+    for t in tickets:
+        with st.expander(f"#{t['id']} · {t['title']} · {t['status']}"):
+            st.markdown(f"""
+            <div style="
+                background:#0f172a;
+                padding:16px;
+                border-radius:14px;
+                color:white;
+            ">
+                <p><b>Priority:</b> {t['priority']}</p>
+                <p><b>Status:</b> {t['status']}</p>
+                <p><b>Created:</b> {t.get('created_at','—')}</p>
+                <p><b>Description:</b></p>
+                <p>{t.get('description','—')}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 

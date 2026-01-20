@@ -1,12 +1,12 @@
 from flask import Flask
 # from flask_jwt_extended import JWTManager
 
-from routes.customers import customer_bp
-from routes.tickets import ticket_bp
-from routes.search import search_bp
-from routes.auth import auth_bp
-from routes.dashboard import dashboard_bp
-from security.security import SECRET_KEY, ALGORITHM, create_access_token
+# from routes.customers import customer_bp
+# from routes.tickets import ticket_bp
+# from routes.search import search_bp
+# from routes.auth import auth_bp
+# from routes.dashboard import dashboard_bp
+# from security.security import SECRET_KEY, ALGORITHM, create_access_token
 
 app = Flask(__name__)
 
@@ -16,6 +16,7 @@ from routes.customers import customer_bp
 from routes.tickets import ticket_bp
 from routes.activity_logs import log_bp
 from routes.auth import auth_bp
+from routes.search import search_bp
 from routes.dashboard import dashboard_bp
 
 

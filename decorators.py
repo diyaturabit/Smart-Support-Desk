@@ -3,8 +3,6 @@ from functools import wraps
 from flask import request,jsonify
 from security.security import SECRET_KEY
 
-
-
 def jwt_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
