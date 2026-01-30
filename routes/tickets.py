@@ -133,11 +133,11 @@ def list_tickets():
 
         if status:
             sql += " AND status = %s"
-            params.ticket_bpend(status)
+            params.append(status)
 
         if priority:
             sql += " AND priority = %s"
-            params.ticket_bpend(priority)
+            params.append(priority)
 
         tickets = execute_query(sql, tuple(params), fetchall=True)
       
@@ -145,6 +145,7 @@ def list_tickets():
         SELECT 
             t.id,
             t.title,
+            t.description,
             t.status,
             t.priority,
             t.created_at,
@@ -206,6 +207,7 @@ def get_ticket_detail(ticket_id):
         sql = """
             SELECT 
                 t.id, t.title, t.description, t.status, t.priority,
+                t.customer_id,
                 t.created_at,
                 c.name AS customer_name,
                 c.email AS customer_email

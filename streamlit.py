@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
 from Redis.data_viewing import to_dataframe,hide_columns,select_columns,timing,rename_columns
-API_URL = "http://127.0.0.1:5000"
-
+API_URL = "http://192.168.1.70:5000"
+BACKEND_PORT="http://192.168.1.70:8000"
 st.set_page_config("Smart Support Desk", layout="wide")
 st.markdown("""
 <style>
@@ -269,6 +269,15 @@ def customers_page():
             c_age = st.number_input("Age", min_value=1)
 
             if st.button("Create Customer", use_container_width=True):
+                # res=requests.post(
+                #     f"{BACKEND_PORT}/sync_customers/create_customers",json={
+                #                  "name": c_name,
+                #         "email": c_email,
+                #         "company": c_company,
+                #         "age": c_age
+                #     }   
+                # )
+                # hubspot_id=res.json().get("hubspot_id")
                 res = requests.post(
                     f"{API_URL}/customer/create_customer",
                     headers=api_headers(),
@@ -277,10 +286,25 @@ def customers_page():
                         "email": c_email,
                         "company": c_company,
                         "age": c_age
-                    }
+                    } 
                 )
+                data = res.json()
+                customer_id = data.get("customer_id") or data.get("id")
+
+                if not customer_id:
+                    st.error(f"Customer created but ID not returned: {data}")
+                    st.stop()
+
+                requests.post(f"{BACKEND_PORT}/sync_customers/by-id",
+                              json={"customer_id":customer_id})
+                st.success("🚀 Customer synced to HubSpot")
+
                 if res.status_code == 201:
-                    st.success("Customer created")
+                    # hubspot_id=res.json().get("hubspot_id")
+                    st.success("Customer created in hubspot")
+                    # st.session_state["hubspot_customer_id"] = hubspot_id
+                else:
+                    st.error("❌ Failed to create customer")
                     st.rerun()
 
 
@@ -305,26 +329,41 @@ def customers_page():
 
             with col1:
                 if st.button("Update", use_container_width=True):
-                    res = requests.put(
-                        f"{API_URL}/customer/update_customer/{c['id']}",
-                        headers=api_headers(),
-                        json={
+                    requests.put(f"{BACKEND_PORT}/sync_customers/update_customer",
+                                  json={
+                            "customer_id": c["id"],
                             "name": name,
                             "email": email,
                             "company": company,
                             "age": age
-                        }
-                    )
+                        })
+                    st.success("🚀 Ticket synced to HubSpot")
+                    # res = requests.put(
+                    #     f"{API_URL}/customer/update_customer/{c['id']}",
+                    #     headers=api_headers(),
+                    #     json={
+                    #         "name": name,
+                    #         "email": email,
+                    #         "company": company,
+                    #         "age": age
+                    #     }
+                    # )
                     st.success("Updated")
                     st.rerun()
 
             with col2:
                 if st.button("Delete", use_container_width=True):
                     st.warning("Customer deleted")
+                    requests.delete(f"{BACKEND_PORT}/sync_customers/delete_customer",
+                                  json={"customer_id":c["id"]})
+                    st.success("🚀 Ticket synced to HubSpot")
                     requests.delete(
                         f"{API_URL}/customer/delete_customer/{c['id']}",
                         headers=api_headers()
                     )
+                    requests.delete(f"{BACKEND_PORT}/sync_customers/delete_customer",
+                                  json={"customer_id":c["id"]})
+                    st.success("🚀 Ticket synced to HubSpot")
                     st.rerun()
 
     # -------- VIEW --------
@@ -386,6 +425,10 @@ def tickets_page():
                     "customer_id": customer_id
                 }
             )
+            ticket_id = res.json()["ticket_id"]
+            requests.post(f"{BACKEND_PORT}/sync_tickets/id-by",
+                          json={"ticket_id":ticket_id})
+            st.success("🚀 Ticket synced to HubSpot")
 
             if res.status_code == 201:
                 st.success("Ticket created successfully")
@@ -434,7 +477,7 @@ def tickets_page():
                priority = st.selectbox(
                    "Priority",
                    ["High", "Medium", "Low"],
-                   index=["High", "Medium", "Low"].index(t["priority"])
+                   index=["High", "Medium", "Low"].index(t["priority"]),key=f"priority_{t['id']}"
                )
 
                payload = {
@@ -447,23 +490,37 @@ def tickets_page():
                    status = st.selectbox(
                        "Status",
                        ["Open", "Inprogress", "Closed"],
-                       index=["Open", "Inprogress", "Closed"].index(t["status"])
+                       index=["Open", "Inprogress", "Closed"].index(t["status"]), key=f"status_{t['id']}"
                    )
                    payload["status"] = status
 
                col1, col2, col3 = st.columns(3)
 
                with col1:
-                   if st.button("Update Ticket", key=f"update_{t['id']}"):
-                       res = requests.put(
-                           f"{API_URL}/ticket/update_ticket/{t['id']}",
-                           headers=api_headers(),
-                           json=payload
-                       )
-                       if res.status_code == 200:
-                           st.success("Ticket updated")
-                           st.rerun()
+                    if st.button("Update Ticket", key=f"update_{t['id']}"):
+                    
+                        sync_payload = {
+                            "ticket_id": t["id"],
+                            "title": title,
+                            "description": description,
+                            "priority": priority
+                        }
 
+                        if role == "admin":
+                            sync_payload["status"] = status
+
+                        res = requests.put(
+                            f"{BACKEND_PORT}/sync_tickets/update_ticket",
+                            json=sync_payload
+                        )
+
+                        if res.status_code == 200:
+                            st.success("🚀 Ticket updated & synced to HubSpot")
+                            st.rerun()
+                        else:
+                            st.error("Failed to update ticket")
+
+ 
                with col2:
                    if st.button("Close Ticket", key=f"close_{t['id']}"):
                        res = requests.put(
@@ -477,6 +534,9 @@ def tickets_page():
 
                with col3:
                    if st.button("Delete Ticket", key=f"delete_{t['id']}"):
+                       requests.delete(f"{BACKEND_PORT}/sync_tickets/ticket_delete",
+                                  json={"ticket_id":t["id"]})
+                       st.success("🚀 Ticket synced to HubSpot")
                        res = requests.delete(
                            f"{API_URL}/ticket/delete_ticket/{t['id']}",
                            headers=api_headers()
@@ -491,7 +551,6 @@ def tickets_page():
                st.warning("No tickets found")
        else:
            st.info("Please select a customer to continue")
-
 
     with tab3:
         st.subheader("📋 View Tickets")
