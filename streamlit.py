@@ -415,26 +415,47 @@ def tickets_page():
 
             customer_id = next(c["id"] for c in customers if c["email"] == email)
 
-            res = requests.post(
-                f"{API_URL}/ticket/create_ticket",
-                headers=api_headers(),
-                json={
-                    "title": title,
-                    "description": description,
-                    "priority": priority,
-                    "customer_id": customer_id
-                }
-            )
-            ticket_id = res.json()["ticket_id"]
-            requests.post(f"{BACKEND_PORT}/sync_tickets/id-by",
-                          json={"ticket_id":ticket_id})
-            st.success("🚀 Ticket synced to HubSpot")
+            # res = requests.post(
+            #     f"{API_URL}/ticket/create_ticket",
+            #     headers=api_headers(),
+            #     json={
+            #         "title": title,
+            #         "description": description,
+            #         "priority": priority,
+            #         "customer_id": customer_id
+            #     }
+            # )
+            # ticket_id = res.json()["ticket_id"]
+            # requests.post(f"{BACKEND_PORT}/sync_tickets/id-by",
+            #               json={"ticket_id":ticket_id})
+            # st.success("🚀 Ticket synced to HubSpot")
 
-            if res.status_code == 201:
-                st.success("Ticket created successfully")
+            # if res.status_code == 201:
+            #     st.success("Ticket created successfully")
+            #     st.rerun()
+            # else:
+            #     st.error(res.text)
+            res = requests.post(
+                    f"{BACKEND_PORT}/sync_tickets/create_tickets",
+                    headers=api_headers(),
+                    json={
+                        "payload": {
+                            "title": title,
+                            "description": description,
+                            "priority": priority,
+                            "email":email
+                        }
+                        # "hubspot_contact_id": str(customer_id)  # must be string
+                    }
+                )
+            if res.status_code == 200:
+                data = res.json()
+                st.success(f"🚀 Ticket created and synced!\n"
+                           f"Project1 ID: {data['internal_ticket_db_id']}\n"
+                           f"HubSpot ID: {data['hubspot_ticket_id']}")
                 st.rerun()
             else:
-                st.error(res.text)
+                st.error(f"❌ Error: {res.text}")
 
     
     with tab2:

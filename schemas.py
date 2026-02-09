@@ -16,9 +16,9 @@ class CustomerResponse(BaseModel):
 
 class TicketCreate(BaseModel):
     title:str
-    description:str
+    description:Optional[str]
     priority:Literal["Low","Medium","High"]
-    customer_id:int
+    customer_id: Optional[int] = None
 
 class TicketResponse(BaseModel):
     id:int
